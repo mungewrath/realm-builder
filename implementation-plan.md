@@ -41,18 +41,28 @@ Player feedback: color-only tiles on a fixed small map read like a minimap.
 - Touch handled natively (ScreenTouch/ScreenDrag); emulated mouse events are
   filtered out by device ID so nothing double-processes.
 
-## M2 — Peasant agents
+## M2 — Peasants, builders & tax rounds (Majesty-style economy)
 
-Villagers become visible agents instead of abstract numbers.
+Villagers become visible agents, and money/buildings get their real mechanics.
 
-- Houses spawn peasants; peasants walk to a farm, work, return food to keep.
-- Food/tax production comes from peasant labor (replaces per-farm flat rates).
-- Peasants flee raiders (behavior stub used again in M3).
-- Tests: agent counts vs. houses, food delivered over N ticks, no stuck agents
-  after long simulation (deadlock check).
+- Houses spawn peasants; peasants walk to a farm, work, and carry food back
+  to the keep. Food/pop growth comes from delivered labor, replacing flat rates.
+- Construction flow: tapping a tile creates a **construction site flag**;
+  peasants walk out to it and raise the building.
+  Prototype simplification (explicit): buildings *warp in* on placement at
+  first; the walk-out-and-build behavior is layered in behind the same
+  interface, so the player-visible flow doesn't change.
+- Tax rounds: houses accrue tax over time; a **tax collector** (employed by
+  the keep) walks a round house-to-house, collects gold, and deposits it at
+  the keep. Uncollected tax caps (or decays) — soft pressure to keep peasants
+  safe and roads of the realm short. Replaces the abstract `gold += pop`.
+- Peasants flee raiders (behavior stub reused in M3).
+- Tests: construction completion accounting, tax collected vs. houses on the
+  round, delivery sums over N ticks, no stuck agents in long-run sims
+  (deadlock check).
 
-Done when: you can watch peasants walking between buildings and starving
-becomes visible (agents disappear) rather than a number ticking down.
+Done when: you can watch a peasant finish a house, then watch the collector
+do a round and see the keep's gold tick up from what he carried.
 
 ## M3 — Goblins & guards (faction 1)
 
@@ -76,6 +86,8 @@ recoverable.
   act, spend loot at market, rest at tavern.
 - Player posts bounties (one-tap flags); heroes decide autonomously.
 - Heroes fight goblins; level up (simple stat growth); can die (drop loot).
+- Occasional hero assist on construction sites or escorting tax rounds
+  (flavor-weighted from personality tables, never required).
 - Tests: incentive scoring table snapshot, hero loop (fight/rest/shop),
   attraction counts vs. building mix.
 
