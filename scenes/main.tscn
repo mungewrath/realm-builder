@@ -1,20 +1,27 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" path="res://scripts/map_view.gd" id="2_map"]
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1_main")
+
+[node name="MapView" type="Node2D" parent="."]
+unique_name_in_owner = true
+position = Vector2(400, 40)
+script = ExtResource("2_map")
 
 [node name="UI" type="CanvasLayer" parent="."]
 
 [node name="Root" type="Control" parent="UI"]
 anchor_right = 1.0
 anchor_bottom = 1.0
+mouse_filter = 2
 
 [node name="Header" type="VBoxContainer" parent="UI/Root"]
 offset_left = 24.0
 offset_top = 16.0
-offset_right = 640.0
+offset_right = 380.0
 offset_bottom = 260.0
 theme_override_constants/separation = 12
 
@@ -35,7 +42,7 @@ text = "People 0 / 0 | Houses 0"
 [node name="EventLabel" type="Label" parent="UI/Root/Header"]
 unique_name_in_owner = true
 theme_override_font_sizes/font_size = 22
-text = "Build a farm and a house"
+text = "Pick a building, then tap a tile"
 
 [node name="BuildBar" type="HBoxContainer" parent="UI/Root"]
 anchor_left = 0.5
@@ -51,12 +58,14 @@ alignment = 1
 
 [node name="FarmButton" type="Button" parent="UI/Root/BuildBar"]
 unique_name_in_owner = true
+toggle_mode = true
 custom_minimum_size = Vector2(200, 70)
 theme_override_font_sizes/font_size = 26
 text = "Farm (10g)"
 
 [node name="HouseButton" type="Button" parent="UI/Root/BuildBar"]
 unique_name_in_owner = true
+toggle_mode = true
 custom_minimum_size = Vector2(200, 70)
 theme_override_font_sizes/font_size = 26
 text = "House (15g)"
