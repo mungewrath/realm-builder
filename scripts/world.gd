@@ -3,8 +3,8 @@ const FOREST := 1
 const WATER := 2
 const MOUNTAIN := 3
 
-const SIZE_X := 24
-const SIZE_Y := 16
+const SIZE_X := 48
+const SIZE_Y := 32
 
 var tiles := PackedByteArray()
 var rng := RandomNumberGenerator.new()

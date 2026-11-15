@@ -28,6 +28,19 @@ Tile-based world with terrain types and on-map building placement.
 Done when: farms/houses can be placed on specific map tiles and the economy
 still runs; all headless tests pass.
 
+## M1.5 — Readability & navigation (done, pulled forward from M5)
+
+Player feedback: color-only tiles on a fixed small map read like a minimap.
+
+- Map grew to 48x32 (larger than the viewport).
+- One-finger drag / mouse-drag pans; two-finger pinch zooms (0.6x-2.5x), edge
+  clamped so the map can't be lost off-screen; tap (no drag) still places.
+- Placeholder tile "pictures": trees, water waves, mountain peaks with snow
+  caps, grass tufts; buildings got simple glyphs (crop rows, pitched roofs,
+  flagged castle).
+- Touch handled natively (ScreenTouch/ScreenDrag); emulated mouse events are
+  filtered out by device ID so nothing double-processes.
+
 ## M2 — Peasant agents
 
 Villagers become visible agents instead of abstract numbers.
@@ -71,7 +84,8 @@ rogue chases treasure → player nudges with flags, never commands.
 
 ## M5 — Exploration & fog of war
 
-- Map grows beyond viewport; pan and pinch-zoom; zoom-out cap; minimap.
+- Map grows beyond viewport; pan and pinch-zoom were pulled forward into
+  M1.5; remaining here: minimap.
 - Soft-edged fog; heroes reveal terrain as they explore; landmarks (ruins,
   dens, shrines) appear as fog lifts; unexplored areas simulated cheaply.
 - Tests: fog reveal accounting, minimap sync, perf budget at full map reveal

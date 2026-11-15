@@ -48,7 +48,7 @@ func _on_tick() -> void:
 func _refresh() -> void:
 	res_label.text = "Gold %d  |  Food %d  |  Farms %d" % [sim.gold, sim.food, sim.farms]
 	pop_label.text = "People %d / %d  |  Houses %d" % [sim.pop, sim.pop_cap, sim.houses]
-	event_label.text = sim.last_event
+	event_label.text = sim.last_event if sim.last_event != "" else "Drag to explore, pinch to zoom"
 	farm_button.set_pressed_no_signal(build_mode == "farm")
 	house_button.set_pressed_no_signal(build_mode == "house")
 	farm_button.disabled = sim.gold < sim.BUILD_COSTS.farm
