@@ -14,7 +14,7 @@ func _ready() -> void:
 	var world = load("res://scripts/world.gd").new()
 	world.generate(20261114)
 	sim.attach_world(world)
-	map_view.setup(world, sim.buildings)
+	map_view.setup(world, sim)
 	map_view.tile_clicked.connect(_on_tile_clicked)
 	farm_button.pressed.connect(_on_farm_pressed)
 	house_button.pressed.connect(_on_house_pressed)
@@ -43,10 +43,12 @@ func _on_tile_clicked(p: Vector2i) -> void:
 
 func _on_tick() -> void:
 	sim.update()
+	map_view.queue_redraw()
 	_refresh()
 
 func _refresh() -> void:
-	res_label.text = "Gold %d  |  Food %d  |  Farms %d" % [sim.gold, sim.food, sim.farms]
+	res_label.text = "Gold %d  |  Fed %d/%d  |  Farms %d" % [
+		sim.gold, mini(sim.fed_capacity(), sim.pop), sim.pop, sim.farms]
 	pop_label.text = "People %d / %d  |  Houses %d" % [sim.pop, sim.pop_cap, sim.houses]
 	event_label.text = sim.last_event if sim.last_event != "" else "Drag to explore, pinch to zoom"
 	farm_button.set_pressed_no_signal(build_mode == "farm")

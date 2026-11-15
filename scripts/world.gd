@@ -49,6 +49,35 @@ func in_bounds(p: Vector2i) -> bool:
 func is_buildable(p: Vector2i) -> bool:
 	return in_bounds(p) and get_terrain(p) == GRASS
 
+func _walkable(p: Vector2i) -> bool:
+	var t := get_terrain(p)
+	return t == GRASS or t == FOREST
+
+func find_path(from: Vector2i, to: Vector2i) -> Array:
+	# BFS on walkable tiles; returns tile list from after `from` to `to`.
+	var result: Array = []
+	if from == to or not in_bounds(to) or not _walkable(from) or not _walkable(to):
+		return result
+	var prev := {}
+	prev[from] = from
+	var queue: Array = [from]
+	var head := 0
+	while head < queue.size():
+		var cur: Vector2i = queue[head]
+		head += 1
+		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var n: Vector2i = cur + d
+			if in_bounds(n) and _walkable(n) and not prev.has(n):
+				prev[n] = cur
+				queue.append(n)
+	if not prev.has(to):
+		return result
+	var cur := to
+	while cur != from:
+		result.push_front(cur)
+		cur = prev[cur]
+	return result
+
 func find_terrain(t: int) -> Vector2i:
 	for y in SIZE_Y:
 		for x in SIZE_X:

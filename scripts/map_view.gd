@@ -22,6 +22,7 @@ const BUILDING_COLORS := {
 }
 
 var world
+var sim
 var buildings := {}
 
 var _mouse_down := false
@@ -34,9 +35,10 @@ var _tap_pos := Vector2.ZERO
 var _tap_valid := false
 var _pinch_dist := 0.0
 
-func setup(w, buildings_ref: Dictionary) -> void:
+func setup(w, sim_ref) -> void:
 	world = w
-	buildings = buildings_ref
+	sim = sim_ref
+	buildings = sim.buildings
 	queue_redraw()
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -161,6 +163,8 @@ func _draw() -> void:
 					_draw_mountain(origin, x, y)
 	for p in buildings:
 		_draw_building(p, buildings[p])
+	if sim != null:
+		_draw_agents()
 
 func _draw_grass(origin: Vector2, x: int, y: int) -> void:
 	var dark := Color(0.28, 0.46, 0.2)
@@ -194,7 +198,11 @@ func _draw_mountain(origin: Vector2, x: int, y: int) -> void:
 	])
 	draw_colored_polygon(cap, Color(0.85, 0.85, 0.85))
 
-func _draw_building(p: Vector2i, kind: String) -> void:
+func _draw_building(p: Vector2i, b: Dictionary) -> void:
+	if not b.complete:
+		_draw_site(p, b.kind)
+		return
+	var kind: String = b.kind
 	var origin := Vector2(p.x * TILE, p.y * TILE)
 	match kind:
 		"farm":
@@ -216,3 +224,30 @@ func _draw_building(p: Vector2i, kind: String) -> void:
 				origin + Vector2(TILE / 2.0, -14), origin + Vector2(TILE / 2.0 + 8, -11), origin + Vector2(TILE / 2.0, -8),
 			])
 			draw_colored_polygon(flag, Color(0.75, 0.2, 0.2))
+
+func _draw_site(p: Vector2i, kind: String) -> void:
+	var origin := Vector2(p.x * TILE, p.y * TILE)
+	var frame := Color(0.5, 0.37, 0.22)
+	draw_rect(Rect2(origin + Vector2(4, 10), Vector2(TILE - 8, TILE - 16)), frame, false, 2.0)
+	draw_line(origin + Vector2(6, 12), origin + Vector2(TILE - 6, TILE - 8), frame, 2.0)
+	draw_line(origin + Vector2(TILE - 6, 12), origin + Vector2(6, TILE - 8), frame, 2.0)
+	var pole := origin + Vector2(TILE / 2.0, 8)
+	draw_line(pole, pole + Vector2(0, -12), Color(0.25, 0.18, 0.12), 2.0)
+	var flag := PackedVector2Array([
+		pole + Vector2(0, -12), pole + Vector2(9, -9), pole + Vector2(0, -6),
+	])
+	draw_colored_polygon(flag, Color(0.92, 0.75, 0.25))
+
+func _draw_agents() -> void:
+	for a in sim.agents:
+		var c: Vector2 = a.pos * float(TILE)
+		if a.kind == "collector":
+			draw_circle(c, 5.0, Color(0.35, 0.25, 0.15))
+			if a.pouch > 0:
+				draw_circle(c + Vector2(5.0, -5.0), 2.5, Color(0.92, 0.78, 0.2))
+		else:
+			draw_circle(c, 4.0, Color(0.85, 0.72, 0.55))
+			if a.carrying > 0:
+				draw_circle(c + Vector2(0.0, -7.0), 3.0, Color(0.5, 0.7, 0.3))
+			elif a.purpose == "build":
+				draw_circle(c + Vector2(0.0, -7.0), 3.0, Color(0.85, 0.65, 0.2))

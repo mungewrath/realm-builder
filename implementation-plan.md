@@ -41,7 +41,7 @@ Player feedback: color-only tiles on a fixed small map read like a minimap.
 - Touch handled natively (ScreenTouch/ScreenDrag); emulated mouse events are
   filtered out by device ID so nothing double-processes.
 
-## M2 — Peasants, builders & tax rounds (Majesty-style economy)
+## M2 — Peasants, builders & tax rounds (done, Majesty-style economy)
 
 Villagers become visible agents, and money/buildings get their real mechanics.
 
@@ -60,9 +60,42 @@ Villagers become visible agents, and money/buildings get their real mechanics.
 - Tests: construction completion accounting, tax collected vs. houses on the
   round, delivery sums over N ticks, no stuck agents in long-run sims
   (deadlock check).
+- Design pivot (playtest feedback): player-facing food subsistence removed —
+  gold is the limiter, matching Majesty and `design-concept.md`. Farms now
+  define provisions capacity (4 people each); growth needs delivered rations
+  plus headroom, shortage sheds people slowly (soft, floor of 1). Creature
+  ecology (M6) and hero hunger (M4) keep their own separate food systems.
 
 Done when: you can watch a peasant finish a house, then watch the collector
 do a round and see the keep's gold tick up from what he carried.
+
+## M2.5 — Tap-to-inspect (info panel, pulled forward from M8 polish)
+
+Player feedback: no way to see what a building is worth or does, or what a
+unit is up to.
+
+- In explore mode (no build mode active), tapping a building or unit opens an
+  inspector; build mode and map dragging behave exactly as before.
+- Responsive layout: on narrow/phone screens a slim card pinned to the bottom
+  edge that never covers more than ~1/3 of the map (dismiss by tapping empty
+  ground or an X); on wide screens it docks as a side panel, RTS-style. Same
+  data, two layouts.
+- Buildings: name, flavor description, what it produces/attracts/risks
+  (from content-design rows), and vague live state — e.g. a house's tax purse
+  as wording or a subtle meter ("a modest purse"), never raw formulas.
+- Units: role and current activity in flavor ("hauling grain home", "resting
+  at the keep", "on the collector's round"); personality, items, equipment
+  slots appear as they are introduced (M4 heroes).
+- Ecology entries (M6 creatures/dens): what they eat, produce, or attract —
+  hints at mechanics, not numbers.
+- Descriptions live as data rows in `content-design.md` (a `blurb` column or
+  parallel table), not new code paths; exact values stay in the sim.
+- Tests: building/unit → description mapping, tap-vs-drag routing keeps build
+  mode intact, panel content updates per tick.
+
+Done when: tapping a house tells you it's "holding a modest purse", tapping a
+peasant says what he's carrying and where he's headed, and the map stays
+usable underneath on a phone.
 
 ## M3 — Goblins & guards (faction 1)
 
