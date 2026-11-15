@@ -77,6 +77,14 @@ Attraction decays with distance, so placement shapes hero movement.
 | graveyard | Graveyard | 50g | corpse storage | necromancer | undead (dangerous) | double-edged: undead risks vs. necromancer power |
 | sewers | Sewers | 40g | plague control | rogue (den) | — | rogues use as hideout; attracts rats |
 
+### Flavor blurbs (inspector)
+
+Tap-to-inspect text lives in `scripts/descriptions.gd`, kept in spirit-sync
+with the tables above: blurbs hint at what a building produces, attracts, or
+risks, and statuses use wording tiers ("a modest purse") instead of exact
+formulas. Exact mechanics stay in the sim; when adding a building or unit,
+add its title/blurb row to `descriptions.gd` in the same change.
+
 **Not player-buildable (found in wilderness):** monster dens, ruins, camps,
 shrine ruins. These are terrain features that anchor ecology (see §5).
 

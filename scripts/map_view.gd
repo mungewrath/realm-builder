@@ -24,6 +24,7 @@ const BUILDING_COLORS := {
 var world
 var sim
 var buildings := {}
+var selected := Vector2i(-1, -1)
 
 var _mouse_down := false
 var _mouse_moved := false
@@ -165,6 +166,8 @@ func _draw() -> void:
 		_draw_building(p, buildings[p])
 	if sim != null:
 		_draw_agents()
+	if selected.x >= 0:
+		draw_rect(Rect2(Vector2(selected * TILE), Vector2(TILE - 1, TILE - 1)), Color(0.95, 0.8, 0.3), false, 2.0)
 
 func _draw_grass(origin: Vector2, x: int, y: int) -> void:
 	var dark := Color(0.28, 0.46, 0.2)
