@@ -78,6 +78,21 @@ func find_path(from: Vector2i, to: Vector2i) -> Array:
 		cur = prev[cur]
 	return result
 
+func mountain_edge_sites() -> Array:
+	# Mountain tiles with at least one walkable neighbour — where dens can
+	# squat and send warbands down into the realm.
+	var sites: Array = []
+	for y in SIZE_Y:
+		for x in SIZE_X:
+			var p := Vector2i(x, y)
+			if get_terrain(p) != MOUNTAIN:
+				continue
+			for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				if _walkable(p + d):
+					sites.append(p)
+					break
+	return sites
+
 func find_terrain(t: int) -> Vector2i:
 	for y in SIZE_Y:
 		for x in SIZE_X:

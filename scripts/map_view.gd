@@ -19,6 +19,7 @@ const BUILDING_COLORS := {
 	"castle": Color(0.72, 0.68, 0.58),
 	"farm": Color(0.78, 0.62, 0.2),
 	"house": Color(0.55, 0.3, 0.2),
+	"guardhouse": Color(0.58, 0.6, 0.66),
 }
 
 var world
@@ -164,6 +165,9 @@ func _draw() -> void:
 					_draw_mountain(origin, x, y)
 	for p in buildings:
 		_draw_building(p, buildings[p])
+	if sim != null and sim.get("dens") != null:
+		for p in sim.dens:
+			_draw_den(p, sim.dens[p])
 	if sim != null:
 		_draw_agents()
 	if selected.x >= 0:
@@ -227,6 +231,33 @@ func _draw_building(p: Vector2i, b: Dictionary) -> void:
 				origin + Vector2(TILE / 2.0, -14), origin + Vector2(TILE / 2.0 + 8, -11), origin + Vector2(TILE / 2.0, -8),
 			])
 			draw_colored_polygon(flag, Color(0.75, 0.2, 0.2))
+		"guardhouse":
+			# Stone watch-tower with a pale-blue banner.
+			draw_rect(Rect2(origin + Vector2(5, 10), Vector2(TILE - 10, TILE - 12)), BUILDING_COLORS[kind])
+			draw_rect(Rect2(origin + Vector2(3, 6), Vector2(TILE - 6, 6)), BUILDING_COLORS[kind])
+			for n in 2:
+				draw_rect(Rect2(origin + Vector2(6 + n * 12, 3), Vector2(4, 4)), BUILDING_COLORS[kind])
+			draw_rect(Rect2(origin + Vector2(TILE / 2.0 - 2, 16), Vector2(4, TILE - 18)), Color(0.3, 0.3, 0.34))
+			draw_line(origin + Vector2(TILE / 2.0 + 5, 8), origin + Vector2(TILE / 2.0 + 5, -6), Color(0.2, 0.2, 0.2), 2.0)
+			var pennant := PackedVector2Array([
+				origin + Vector2(TILE / 2.0 + 5, -6), origin + Vector2(TILE / 2.0 + 13, -3), origin + Vector2(TILE / 2.0 + 5, 0),
+			])
+			draw_colored_polygon(pennant, Color(0.45, 0.6, 0.85))
+
+func _draw_den(p: Vector2i, den: Dictionary) -> void:
+	# Cave mouth with a tattered red pennant; level pips show how bold it is.
+	var origin := Vector2(p.x * TILE, p.y * TILE)
+	var mouth := Vector2(origin.x + TILE / 2.0, origin.y + TILE - 5)
+	draw_circle(mouth, 11.0, Color(0.1, 0.08, 0.08))
+	draw_circle(mouth + Vector2(0, 2), 8.0, Color(0.04, 0.03, 0.03))
+	var pole := mouth + Vector2(8, -4)
+	draw_line(pole, pole + Vector2(0, -16), Color(0.2, 0.15, 0.1), 2.0)
+	var pennant := PackedVector2Array([
+		pole + Vector2(0, -16), pole + Vector2(-11, -13), pole + Vector2(0, -9),
+	])
+	draw_colored_polygon(pennant, Color(0.7, 0.15, 0.12))
+	for i in int(den.level):
+		draw_circle(mouth + Vector2(-9 + i * 7, -16), 2.2, Color(0.85, 0.75, 0.2))
 
 func _draw_site(p: Vector2i, kind: String) -> void:
 	var origin := Vector2(p.x * TILE, p.y * TILE)
@@ -244,13 +275,26 @@ func _draw_site(p: Vector2i, kind: String) -> void:
 func _draw_agents() -> void:
 	for a in sim.agents:
 		var c: Vector2 = a.pos * float(TILE)
-		if a.kind == "collector":
-			draw_circle(c, 5.0, Color(0.35, 0.25, 0.15))
-			if a.pouch > 0:
-				draw_circle(c + Vector2(5.0, -5.0), 2.5, Color(0.92, 0.78, 0.2))
-		else:
-			draw_circle(c, 4.0, Color(0.85, 0.72, 0.55))
-			if a.carrying > 0:
-				draw_circle(c + Vector2(0.0, -7.0), 3.0, Color(0.5, 0.7, 0.3))
-			elif a.purpose == "build":
-				draw_circle(c + Vector2(0.0, -7.0), 3.0, Color(0.85, 0.65, 0.2))
+		match a.kind:
+			"collector":
+				draw_circle(c, 5.0, Color(0.35, 0.25, 0.15))
+				if a.pouch > 0:
+					draw_circle(c + Vector2(5.0, -5.0), 2.5, Color(0.92, 0.78, 0.2))
+			"goblin":
+				draw_circle(c, 4.5, Color(0.3, 0.55, 0.2))
+				draw_circle(c + Vector2(1.5, -1.0), 1.0, Color(0.9, 0.2, 0.1))
+				draw_circle(c + Vector2(-1.5, -1.0), 1.0, Color(0.9, 0.2, 0.1))
+				if a.carrying > 0:
+					# Foraged provisions (green) or plundered gold.
+					var loot_col := Color(0.5, 0.7, 0.3) if a.purpose == "forage" \
+						else Color(0.92, 0.78, 0.2)
+					draw_circle(c + Vector2(5.0, -4.0), 2.5, loot_col)
+			"guard":
+				draw_circle(c, 4.5, Color(0.45, 0.55, 0.7))
+				draw_line(c + Vector2(3, 2), c + Vector2(-3, -6), Color(0.85, 0.85, 0.9), 1.5)
+			_:
+				draw_circle(c, 4.0, Color(0.85, 0.72, 0.55))
+				if a.carrying > 0:
+					draw_circle(c + Vector2(0.0, -7.0), 3.0, Color(0.5, 0.7, 0.3))
+				elif a.purpose == "build":
+					draw_circle(c + Vector2(0.0, -7.0), 3.0, Color(0.85, 0.65, 0.2))
