@@ -20,7 +20,18 @@ const BUILDING_COLORS := {
 	"farm": Color(0.78, 0.62, 0.2),
 	"house": Color(0.55, 0.3, 0.2),
 	"guardhouse": Color(0.58, 0.6, 0.66),
+	"tavern": Color(0.45, 0.3, 0.18),
+	"market": Color(0.55, 0.42, 0.26),
+	"shrine": Color(0.8, 0.78, 0.72),
 }
+
+const HERO_COLORS := {
+	"rogue": Color(0.55, 0.4, 0.65),
+	"warrior": Color(0.75, 0.4, 0.3),
+	"paladin": Color(0.9, 0.85, 0.55),
+}
+
+const GOLD := Color(0.92, 0.78, 0.2)
 
 var world
 var sim
@@ -168,6 +179,9 @@ func _draw() -> void:
 	if sim != null and sim.get("dens") != null:
 		for p in sim.dens:
 			_draw_den(p, sim.dens[p])
+	if sim != null and sim.get("loot_piles") != null:
+		for p in sim.loot_piles:
+			_draw_loot_pile(p)
 	if sim != null:
 		_draw_agents()
 	if selected.x >= 0:
@@ -243,6 +257,28 @@ func _draw_building(p: Vector2i, b: Dictionary) -> void:
 				origin + Vector2(TILE / 2.0 + 5, -6), origin + Vector2(TILE / 2.0 + 13, -3), origin + Vector2(TILE / 2.0 + 5, 0),
 			])
 			draw_colored_polygon(pennant, Color(0.45, 0.6, 0.85))
+		"tavern":
+			# Timber hall with a pitched roof and a hanging ale sign.
+			draw_rect(Rect2(origin + Vector2(4, 14), Vector2(TILE - 8, TILE - 18)), BUILDING_COLORS[kind])
+			var roof := PackedVector2Array([
+				origin + Vector2(TILE / 2.0, 4), origin + Vector2(3, 15), origin + Vector2(TILE - 3, 15),
+			])
+			draw_colored_polygon(roof, Color(0.3, 0.2, 0.12))
+			draw_line(origin + Vector2(6, 10), origin + Vector2(13, 10), Color(0.25, 0.18, 0.12), 2.0)
+			draw_rect(Rect2(origin + Vector2(7, 10), Vector2(5, 6)), GOLD)
+			draw_rect(Rect2(origin + Vector2(7, 16), Vector2(2, 2)), Color(0.85, 0.85, 0.85))
+		"market":
+			# Stall with a striped awning.
+			draw_rect(Rect2(origin + Vector2(5, 14), Vector2(TILE - 10, TILE - 18)), BUILDING_COLORS[kind])
+			for n in 4:
+				var stripe := Color(0.85, 0.25, 0.2) if n % 2 == 0 else Color(0.92, 0.88, 0.8)
+				draw_rect(Rect2(origin + Vector2(3 + n * 7, 8), Vector2(7, 6)), stripe)
+			draw_circle(Vector2(origin.x + TILE / 2.0, origin.y + 19), 2.5, GOLD)
+		"shrine":
+			# Pale stone altar with a burning light.
+			draw_rect(Rect2(origin + Vector2(8, 12), Vector2(TILE - 16, TILE - 16)), BUILDING_COLORS[kind])
+			draw_rect(Rect2(origin + Vector2(4, TILE - 10), Vector2(TILE - 8, 6)), Color(0.7, 0.68, 0.62))
+			draw_circle(Vector2(origin.x + TILE / 2.0, origin.y + 12), 3.0, GOLD)
 
 func _draw_den(p: Vector2i, den: Dictionary) -> void:
 	# Cave mouth with a tattered red pennant; level pips show how bold it is.
@@ -257,7 +293,22 @@ func _draw_den(p: Vector2i, den: Dictionary) -> void:
 	])
 	draw_colored_polygon(pennant, Color(0.7, 0.15, 0.12))
 	for i in int(den.level):
-		draw_circle(mouth + Vector2(-9 + i * 7, -16), 2.2, Color(0.85, 0.75, 0.2))
+		draw_circle(mouth + Vector2(-9 + i * 7, -16), 2.2, GOLD)
+	# A posted bounty flies a gold pennant beside the den's ragged one.
+	if sim != null and sim.get("bounties") != null and sim.bounties.has(p):
+		var bpole := mouth + Vector2(-8, -4)
+		draw_line(bpole, bpole + Vector2(0, -16), Color(0.2, 0.15, 0.1), 2.0)
+		var bpennant := PackedVector2Array([
+			bpole + Vector2(0, -16), bpole + Vector2(11, -13), bpole + Vector2(0, -9),
+		])
+		draw_colored_polygon(bpennant, GOLD)
+
+func _draw_loot_pile(p: Vector2i) -> void:
+	# A spilled purse: a little heap of coins on the ground.
+	var origin := Vector2(p.x * TILE, p.y * TILE)
+	for i in 4:
+		draw_circle(origin + Vector2(9 + (i % 2) * 7, 19 - int(i / 2.0) * 5), 2.5, GOLD)
+	draw_circle(origin + Vector2(12, 17), 2.0, Color(0.75, 0.6, 0.12))
 
 func _draw_site(p: Vector2i, kind: String) -> void:
 	var origin := Vector2(p.x * TILE, p.y * TILE)
@@ -292,6 +343,14 @@ func _draw_agents() -> void:
 			"guard":
 				draw_circle(c, 4.5, Color(0.45, 0.55, 0.7))
 				draw_line(c + Vector2(3, 2), c + Vector2(-3, -6), Color(0.85, 0.85, 0.9), 1.5)
+			"hero":
+				# Class-colored figure with a sword and level pips overhead.
+				draw_circle(c, 5.0, HERO_COLORS.get(a.hero_class, Color(0.8, 0.8, 0.8)))
+				draw_line(c + Vector2(3, 2), c + Vector2(-3, -6), Color(0.9, 0.9, 0.95), 1.5)
+				if a.pouch > 0:
+					draw_circle(c + Vector2(5.0, -5.0), 2.5, GOLD)
+				for i in clampi(a.level, 0, 5):
+					draw_circle(c + Vector2(-6 + i * 4, -9), 1.5, GOLD)
 			_:
 				draw_circle(c, 4.0, Color(0.85, 0.72, 0.55))
 				if a.carrying > 0:

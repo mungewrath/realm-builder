@@ -26,8 +26,10 @@ func _make_sim(seed_value: int):
 	var sim = load("res://scripts/kingdom.gd").new()
 	sim.attach_world(WorldC)
 	# These tests assert exact economy accounting; goblin raids (M3) would
-	# raze buildings mid-test. Raid dynamics get their own suite.
+	# raze buildings mid-test. Raid dynamics get their own suite. Heroes
+	# (M4) get one too — warriors from the guardhouse would muddy counts.
 	sim.raids_enabled = false
+	sim.heroes_enabled = false
 	return sim
 
 func _test_construction() -> void:

@@ -13,6 +13,15 @@ var inspect_title: Label
 var inspect_blurb: Label
 var inspect_status: Label
 var inspect_units: Label
+var inspect_action: Button
+
+# Sim speed (dev tool): 1-3x. The tick timer runs at 1/speed seconds.
+const SPEEDS := [1.0, 1.5, 2.0, 3.0]
+var sim_speed := 1.0
+var tick_timer: Timer
+var speed_panel: PanelContainer
+var speed_buttons := {}
+var speed_label: Label
 
 @onready var map_view := %MapView
 @onready var res_label: Label = %ResLabel
@@ -21,6 +30,10 @@ var inspect_units: Label
 @onready var farm_button: Button = %FarmButton
 @onready var house_button: Button = %HouseButton
 @onready var guard_button: Button = %GuardButton
+@onready var tavern_button: Button = %TavernButton
+@onready var market_button: Button = %MarketButton
+@onready var shrine_button: Button = %ShrineButton
+@onready var dev_button: Button = %DevButton
 
 func _ready() -> void:
 	var world = load("res://scripts/world.gd").new()
@@ -31,25 +44,39 @@ func _ready() -> void:
 	farm_button.pressed.connect(_on_farm_pressed)
 	house_button.pressed.connect(_on_house_pressed)
 	guard_button.pressed.connect(_on_guard_pressed)
+	tavern_button.pressed.connect(_on_tavern_pressed)
+	market_button.pressed.connect(_on_market_pressed)
+	shrine_button.pressed.connect(_on_shrine_pressed)
 	_build_inspect_panel()
+	_build_speed_panel()
 	get_viewport().size_changed.connect(_layout_inspect_panel)
-	var timer := Timer.new()
-	timer.wait_time = 1.0
-	timer.timeout.connect(_on_tick)
-	add_child(timer)
-	timer.start()
+	tick_timer = Timer.new()
+	tick_timer.wait_time = 1.0 / sim_speed
+	tick_timer.timeout.connect(_on_tick)
+	add_child(tick_timer)
+	tick_timer.start()
 	_refresh()
 
 func _on_farm_pressed() -> void:
-	build_mode = "" if build_mode == "farm" else "farm"
-	_refresh()
+	_toggle_build("farm")
 
 func _on_house_pressed() -> void:
-	build_mode = "" if build_mode == "house" else "house"
-	_refresh()
+	_toggle_build("house")
 
 func _on_guard_pressed() -> void:
-	build_mode = "" if build_mode == "guardhouse" else "guardhouse"
+	_toggle_build("guardhouse")
+
+func _on_tavern_pressed() -> void:
+	_toggle_build("tavern")
+
+func _on_market_pressed() -> void:
+	_toggle_build("market")
+
+func _on_shrine_pressed() -> void:
+	_toggle_build("shrine")
+
+func _toggle_build(kind: String) -> void:
+	build_mode = "" if build_mode == kind else kind
 	_refresh()
 
 func _on_tile_clicked(p: Vector2i) -> void:
@@ -75,9 +102,14 @@ func _refresh() -> void:
 	farm_button.set_pressed_no_signal(build_mode == "farm")
 	house_button.set_pressed_no_signal(build_mode == "house")
 	guard_button.set_pressed_no_signal(build_mode == "guardhouse")
-	farm_button.disabled = sim.gold < sim.BUILD_COSTS.farm
-	house_button.disabled = sim.gold < sim.BUILD_COSTS.house
-	guard_button.disabled = sim.gold < sim.BUILD_COSTS.guardhouse
+	tavern_button.set_pressed_no_signal(build_mode == "tavern")
+	market_button.set_pressed_no_signal(build_mode == "market")
+	shrine_button.set_pressed_no_signal(build_mode == "shrine")
+	var kinds := {"farm": farm_button, "house": house_button, "guardhouse": guard_button,
+		"tavern": tavern_button, "market": market_button, "shrine": shrine_button}
+	for kind in kinds:
+		var btn: Button = kinds[kind]
+		btn.disabled = sim.gold < sim.BUILD_COSTS[kind]
 
 # --- Tap-to-inspect -------------------------------------------------------
 
@@ -102,9 +134,14 @@ func _build_inspect_panel() -> void:
 	inspect_blurb = _make_body_label()
 	inspect_status = _make_body_label()
 	inspect_units = _make_body_label()
+	inspect_action = Button.new()
+	inspect_action.add_theme_font_size_override("font_size", 20)
+	inspect_action.visible = false
+	inspect_action.pressed.connect(_on_inspect_action)
 	vb.add_child(top)
 	vb.add_child(inspect_blurb)
 	vb.add_child(inspect_status)
+	vb.add_child(inspect_action)
 	vb.add_child(inspect_units)
 	inspect_panel.add_child(vb)
 	get_node("UI/Root").add_child(inspect_panel)
@@ -137,49 +174,81 @@ func _layout_inspect_panel() -> void:
 		var h := minf(240.0, vp.y / 3.0)
 		inspect_panel.offset_left = 12.0
 		inspect_panel.offset_right = -12.0
-		inspect_panel.offset_top = -h - 116.0
-		inspect_panel.offset_bottom = -116.0
+		inspect_panel.offset_top = -h - 210.0
+		inspect_panel.offset_bottom = -210.0
 
 func _inspect(p: Vector2i) -> void:
 	var b = sim.buildings.get(p)
 	var den = sim.dens.get(p)
+	var pile_gold: int = int(sim.loot_piles.get(p, 0))
 	var here := []
 	for a in sim.agents:
 		if a.tile() == p:
 			here.append(a)
-	if b == null and den == null and here.is_empty():
+	if b == null and den == null and pile_gold <= 0 and here.is_empty():
 		_close_inspect()
 		return
-	# A click on a building or den pins the tile; a unit standing on it is
-	# listed underneath, never followed. Only a bare unit click follows.
-	selected_unit = null if (b != null or den != null) else here[0]
+	# A click on a building, den, or loot pile pins the tile; a unit standing
+	# on it is listed underneath, never followed. Only a bare unit click
+	# follows.
+	selected_unit = null if (b != null or den != null or pile_gold > 0) else here[0]
 	if selected_unit != null:
 		_inspect_agent(selected_unit)
 		return
 	selected_tile = p
 	map_view.selected = p
+	_fill_tile_inspect(b, den, pile_gold)
+	_show_units(here, true)
+	_refresh_action(p, den)
+
+func _fill_tile_inspect(b, den, pile_gold: int) -> void:
 	if b != null:
 		inspect_title.text = Descriptions.building_title(b.kind)
 		inspect_blurb.text = Descriptions.building_blurb(b.kind)
-		inspect_status.text = Descriptions.building_status(b.kind, p, b, sim)
-	else:
+		inspect_status.text = Descriptions.building_status(b.kind, selected_tile, b, sim)
+	elif den != null:
 		inspect_title.text = Descriptions.den_title()
 		inspect_blurb.text = Descriptions.den_blurb()
-		inspect_status.text = Descriptions.den_status(den)
-	_show_units(here, true)
+		inspect_status.text = Descriptions.den_status(den, selected_tile, sim)
+	elif pile_gold > 0:
+		inspect_title.text = Descriptions.loot_title()
+		inspect_blurb.text = Descriptions.loot_blurb()
+		inspect_status.text = Descriptions.loot_status(pile_gold)
+
+func _refresh_action(p: Vector2i, den) -> void:
+	# One-tap bounty flags live on the den's inspector card.
+	if den == null or not dens_reachable(p):
+		inspect_action.visible = false
+		return
+	if sim.bounties.has(p):
+		inspect_action.text = "Add to bounty (+%dg)" % (sim.BOUNTY_FEE - sim.BOUNTY_OVERHEAD)
+	else:
+		inspect_action.text = "Post bounty (%dg)" % sim.BOUNTY_FEE
+	inspect_action.visible = true
+
+func dens_reachable(p: Vector2i) -> bool:
+	# Only dens the realm can actually reach are bounty-able.
+	return sim.find_path(sim.den_doorstep(p, sim.keep_pos), sim.keep_pos).size() > 0
+
+func _on_inspect_action() -> void:
+	if selected_tile.x >= 0:
+		sim.post_bounty(selected_tile)
+		_refresh()
+		_refresh_inspect()
 
 func _inspect_agent(a) -> void:
 	# Follow mode: the panel tracks the unit wherever it walks.
 	selected_tile = a.tile()
 	map_view.selected = selected_tile
-	inspect_title.text = Descriptions.UNIT_ROLES.get(a.kind, "Stranger")
-	inspect_blurb.text = ""
+	inspect_title.text = Descriptions.unit_title(a)
+	inspect_blurb.text = Descriptions.hero_blurb(a) if a.kind == "hero" else ""
 	inspect_status.text = Descriptions.agent_activity(a)
 	var here := []
 	for u in sim.agents:
 		if u.tile() == selected_tile and u != a:
 			here.append(u)
 	_show_units(here, false)
+	inspect_action.visible = false
 
 func _show_units(here: Array, include_first: bool) -> void:
 	var lines := []
@@ -209,27 +278,72 @@ func _refresh_inspect() -> void:
 func _inspect_tile(p: Vector2i) -> void:
 	var b = sim.buildings.get(p)
 	var den = sim.dens.get(p)
+	var pile_gold: int = int(sim.loot_piles.get(p, 0))
 	var here := []
 	for a in sim.agents:
 		if a.tile() == p:
 			here.append(a)
-	if b == null and den == null:
-		# A razed or vanished pin: close rather than showing stale text.
+	if b == null and den == null and pile_gold <= 0:
+		# A razed, claimed, or vanished pin: close rather than stale text.
 		_close_inspect()
 		return
-	if b != null:
-		inspect_title.text = Descriptions.building_title(b.kind)
-		inspect_blurb.text = Descriptions.building_blurb(b.kind)
-		inspect_status.text = Descriptions.building_status(b.kind, p, b, sim)
-	else:
-		inspect_title.text = Descriptions.den_title()
-		inspect_blurb.text = Descriptions.den_blurb()
-		inspect_status.text = Descriptions.den_status(den)
+	_fill_tile_inspect(b, den, pile_gold)
 	_show_units(here, true)
+	_refresh_action(p, den)
 
 func _close_inspect() -> void:
 	inspect_panel.visible = false
 	selected_tile = Vector2i(-1, -1)
 	selected_unit = null
 	map_view.selected = Vector2i(-1, -1)
+	inspect_action.visible = false
 	map_view.queue_redraw()
+
+# --- Dev tools: sim speed (1-3x) --------------------------------------------
+
+func _build_speed_panel() -> void:
+	speed_panel = PanelContainer.new()
+	speed_panel.name = "SpeedPanel"
+	speed_panel.visible = false
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 6)
+	speed_label = Label.new()
+	speed_label.add_theme_font_size_override("font_size", 18)
+	speed_label.text = "Sim speed"
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	for s in SPEEDS:
+		var b := Button.new()
+		b.text = "%sx" % str(s)
+		b.toggle_mode = true
+		b.add_theme_font_size_override("font_size", 18)
+		b.pressed.connect(_set_speed.bind(s))
+		row.add_child(b)
+		speed_buttons[s] = b
+	vb.add_child(speed_label)
+	vb.add_child(row)
+	speed_panel.add_child(vb)
+	get_node("UI/Root").add_child(speed_panel)
+	speed_panel.anchor_left = 1.0
+	speed_panel.anchor_right = 1.0
+	speed_panel.offset_left = -260.0
+	speed_panel.offset_right = -16.0
+	speed_panel.offset_top = 76.0
+	speed_panel.offset_bottom = 150.0
+	_mark_speed_buttons()
+	dev_button.pressed.connect(_on_dev_pressed)
+
+func _on_dev_pressed() -> void:
+	speed_panel.visible = not speed_panel.visible
+	_mark_speed_buttons()
+
+func _set_speed(s: float) -> void:
+	sim_speed = s
+	tick_timer.wait_time = 1.0 / s
+	tick_timer.start()
+	speed_label.text = "Sim speed  ·  now %sx" % str(s)
+	_mark_speed_buttons()
+
+func _mark_speed_buttons() -> void:
+	for s in speed_buttons:
+		speed_buttons[s].set_pressed_no_signal(is_equal_approx(s, sim_speed))

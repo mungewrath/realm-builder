@@ -32,6 +32,9 @@ func _make_sim(seed_value: int):
 	WorldC.generate(seed_value)
 	var sim = load("res://scripts/kingdom.gd").new()
 	sim.attach_world(WorldC)
+	# Heroes (M4) have their own suite: warrior attraction would muddy the
+	# raid/guard accounting here.
+	sim.heroes_enabled = false
 	return sim
 
 # Bias the den to raid as soon as its mood expires; speed up musters. The

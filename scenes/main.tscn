@@ -27,12 +27,12 @@ theme_override_constants/separation = 12
 
 [node name="Title" type="Label" parent="UI/Root/Header"]
 theme_override_font_sizes/font_size = 36
-text = "Majesty"
+text = "Realm Builder"
 
 [node name="ResLabel" type="Label" parent="UI/Root/Header"]
 unique_name_in_owner = true
 theme_override_font_sizes/font_size = 26
-text = "Gold 0 | Food 0 | Farms 0"
+text = "Gold 0 | Fed 0/0 | Farms 0"
 
 [node name="PopLabel" type="Label" parent="UI/Root/Header"]
 unique_name_in_owner = true
@@ -44,35 +44,67 @@ unique_name_in_owner = true
 theme_override_font_sizes/font_size = 22
 text = "Pick a building, then tap a tile"
 
-[node name="BuildBar" type="HBoxContainer" parent="UI/Root"]
-anchor_left = 0.5
+[node name="BuildBar" type="HFlowContainer" parent="UI/Root"]
+anchor_left = 0.0
 anchor_top = 1.0
-anchor_right = 0.5
+anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = -340.0
-offset_top = -110.0
-offset_right = 340.0
+offset_left = 8.0
+offset_top = -200.0
+offset_right = -8.0
 offset_bottom = -30.0
-theme_override_constants/separation = 24
+theme_override_constants/separation = 16
 alignment = 1
 
 [node name="FarmButton" type="Button" parent="UI/Root/BuildBar"]
 unique_name_in_owner = true
 toggle_mode = true
-custom_minimum_size = Vector2(200, 70)
-theme_override_font_sizes/font_size = 26
-text = "Farm (10g)"
+custom_minimum_size = Vector2(150, 64)
+theme_override_font_sizes/font_size = 22
+text = "Farm 10g"
 
 [node name="HouseButton" type="Button" parent="UI/Root/BuildBar"]
 unique_name_in_owner = true
 toggle_mode = true
-custom_minimum_size = Vector2(200, 70)
-theme_override_font_sizes/font_size = 26
-text = "House (15g)"
+custom_minimum_size = Vector2(150, 64)
+theme_override_font_sizes/font_size = 22
+text = "House 15g"
 
 [node name="GuardButton" type="Button" parent="UI/Root/BuildBar"]
 unique_name_in_owner = true
 toggle_mode = true
-custom_minimum_size = Vector2(200, 70)
-theme_override_font_sizes/font_size = 26
-text = "Guardhouse (30g)"
+custom_minimum_size = Vector2(150, 64)
+theme_override_font_sizes/font_size = 22
+text = "Guard 30g"
+
+[node name="TavernButton" type="Button" parent="UI/Root/BuildBar"]
+unique_name_in_owner = true
+toggle_mode = true
+custom_minimum_size = Vector2(150, 64)
+theme_override_font_sizes/font_size = 22
+text = "Tavern 25g"
+
+[node name="MarketButton" type="Button" parent="UI/Root/BuildBar"]
+unique_name_in_owner = true
+toggle_mode = true
+custom_minimum_size = Vector2(150, 64)
+theme_override_font_sizes/font_size = 22
+text = "Market 30g"
+
+[node name="ShrineButton" type="Button" parent="UI/Root/BuildBar"]
+unique_name_in_owner = true
+toggle_mode = true
+custom_minimum_size = Vector2(150, 64)
+theme_override_font_sizes/font_size = 22
+text = "Shrine 35g"
+
+[node name="DevButton" type="Button" parent="UI/Root"]
+unique_name_in_owner = true
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -76.0
+offset_right = -16.0
+offset_top = 12.0
+offset_bottom = 60.0
+theme_override_font_sizes/font_size = 20
+text = "Dev"

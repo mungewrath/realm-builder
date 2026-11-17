@@ -97,35 +97,69 @@ Done when: tapping a house tells you it's "holding a modest purse", tapping a
 peasant says what he's carrying and where he's headed, and the map stays
 usable underneath on a phone.
 
-## M3 — Goblins & guards (faction 1)
+## M3 — Goblins & guards (faction 1, done)
 
 First hostile faction, from the wild borders.
 
-- Goblin dens spawn on mountain edges; dens grow with successful raids.
-- Raid incentive: den picks nearest farm/market, sends warband.
-- Guards spawn from guardhouse (new building), patrol radius, intercept raids.
-- Combat resolution is simple attrition; losers flee; dens can be cleared.
-- Soft fail states: raids destroy buildings (repairable), never game over.
-- Tests: raid cooldowns, den growth/clearing, guard interception, 10-game-year
-  sim without deadlock or total extinction.
+- Goblin dens spawn on mountain edges (reachable doorsteps only); dens grow
+  with successful raids (3 levels).
+- Raid incentive: hungry dens pick nearest farm/house, send warbands. The den
+  runs a weighted mood machine (lurk/prowl/forage/raid/muster/rest); goblins
+  run their own weighted behavior layer under it (lurk/wander/prowl/forage).
+- Guards spawn from guardhouses, patrol radius, intercept raids; the watch is
+  leashed to the keep and never storms dens — that is hero work (M4).
+- Combat resolution is simple attrition; losers flee; dens can be cleared by
+  siege (guards adjacent chip den hp). Cleared dens spill their gold as a
+  loot pile and leave a long respawn rest.
+- Soft fail states: raids destroy buildings (razed tiles are rebuildable),
+  never game over.
+- Tests: `tests/raids_test.gd` (den placement, raid pacing, moods, razes and
+  recovery, den growth, guard intercept, leash, retraining, den respawn,
+  10-game-year sim without deadlock or extinction).
 
 Done when: goblins visibly raid, guards respond, and losing a farm is
-recoverable.
+recoverable. ✓
 
-## M4 — Heroes & attraction (indirect control core)
+## M3.5 — Rename & sim speed (done)
 
-- Tavern/guardhouse/shrine attract hero classes with personality weights.
-- Heroes score incentives (bounty flags, treasure, smite-evil), pick goals,
-  act, spend loot at market, rest at tavern.
-- Player posts bounties (one-tap flags); heroes decide autonomously.
-- Heroes fight goblins; level up (simple stat growth); can die (drop loot).
-- Occasional hero assist on construction sites or escorting tax rounds
-  (flavor-weighted from personality tables, never required).
-- Tests: incentive scoring table snapshot, hero loop (fight/rest/shop),
-  attraction counts vs. building mix.
+Two small player-facing tweaks pulled out of band:
 
-Done when: the core loop of the brief works — build tavern → rogue appears →
-rogue chases treasure → player nudges with flags, never commands.
+- The game is now **Realm Builder** (window/project name, scene title,
+  README); "Majesty" lives on only as the inspiration in the docs.
+- A **Dev** button (top-right) opens a small speed panel: 1x / 1.5x / 2x /
+  3x. Speed only re-times the tick timer (1/speed seconds per tick), so the
+  sim itself stays identical at every speed. Purely a dev/comfort tool.
+
+## M4 — Heroes & attraction (indirect control core, done)
+
+- Three hero classes as content rows (`HERO_CLASSES` in `kingdom.gd`):
+  rogue (tavern), warrior (guardhouse), paladin (shrine), each with a
+  personality weight table (bounty / treasure / smite_evil / assist).
+  Attraction: a periodic roll whose weights come straight from the completed
+  building mix; heroes wander in from a connected map edge to the hall that
+  drew them, up to a cap.
+- Heroes score the world (`hero_goal_scores`, pure and table-driven) and
+  always act on their own: rest at the tavern when weary (heals), spend
+  loot at the market (realm profits), chase bounty flags, smite dens,
+  race to loot piles, occasionally lend a hand at construction sites
+  (lowest weight — never required), otherwise patrol the realm.
+- Player posts bounties via the den inspector (one-tap flag, 20g posting
+  of which 18g lands on the flag and 2g is the office's cut; stackable).
+  Heroes decide autonomously whether it beats their other options.
+- Heroes fight in the attrition step with melee weight = level, level up
+  on kills and den clears (+2 max hp), and can die — dropping their purse
+  as a loot pile that treasure-loving heroes (rogues) race to. Fleeing
+  heroes break off at 1 hp and heal at the tavern.
+- Dens cleared by heroes credit xp, pay standing bounties, and leave a
+  loot pile.
+- Escorting tax rounds: deferred (M7 content pass) — construction assist
+  covers the "occasional hero helpfulness" slot for now.
+- Tests: `tests/heroes_test.gd` (attraction mix vs. building mix, arrival,
+  full incentive snapshot per class, shop+rest loop, combat + level-ups,
+  bounty flow, death → loot drop → pickup, 10-game-year run).
+
+Done when: build a tavern → a rogue arrives → rogues chase treasure and
+bounties → the player nudges with flags, never commands. ✓
 
 ## M5 — Exploration & fog of war
 

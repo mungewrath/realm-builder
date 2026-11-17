@@ -41,11 +41,51 @@ const GATHER_TICKS := 4
 const DEN_HEAL_TICKS := 6
 const MUSTER_FOOD_COST := 2
 
+const TAVERN_COST := 25
+const MARKET_COST := 30
+const SHRINE_COST := 35
+
 const BUILD_COSTS := {
 	"farm": FARM_COST,
 	"house": HOUSE_COST,
 	"guardhouse": GUARDHOUSE_COST,
+	"tavern": TAVERN_COST,
+	"market": MARKET_COST,
+	"shrine": SHRINE_COST,
 }
+
+# M4 — heroes & attraction (the indirect-control core). Heroes arrive on
+# their own, score the world against their personality table, and act on
+# their own judgment. The player nudges with buildings, gold, and bounty
+# flags — never commands. Adding a class is a content row, not code.
+const HERO_CLASSES := {
+	"rogue": {
+		"title": "Rogue",
+		"attracted_by": "tavern",
+		"hp": 6,
+		"weights": {"bounty": 4, "treasure": 9, "smite_evil": 1, "assist": 0},
+	},
+	"warrior": {
+		"title": "Warrior",
+		"attracted_by": "guardhouse",
+		"hp": 10,
+		"weights": {"bounty": 8, "treasure": 4, "smite_evil": 3, "assist": 3},
+	},
+	"paladin": {
+		"title": "Paladin",
+		"attracted_by": "shrine",
+		"hp": 12,
+		"weights": {"bounty": 3, "treasure": 0, "smite_evil": 9, "assist": 4},
+	},
+}
+const HERO_GOAL_PRIORITY := ["rest", "shop", "smite", "bounty", "treasure", "assist", "patrol"]
+
+const HERO_PURSE_TARGET := 10
+const HERO_FATIGUE_MAX := 5
+const HERO_REST_TICKS := 10
+const HERO_XP_PER_LEVEL := 4
+const BOUNTY_FEE := 20
+const BOUNTY_OVERHEAD := 2 # the posting office's cut; the rest lands on the flag
 
 var gold: int = START_GOLD
 var pop: int = START_POP
@@ -92,6 +132,26 @@ var buildings_razed := 0
 var guards_fallen := 0
 var intents_seen := {}
 var _removals := []
+
+# M4 — heroes. Attraction pace and hero count are vars so tests and tuning
+# can adjust them. Bounties are the player's one-tap flags on dens; loot
+# piles are what fallen heroes (and cleared dens) leave behind.
+var heroes_enabled := true
+var hero_attraction_ticks := 120
+var _hero_attraction_left := 120
+var hero_arrival_chance := 0.6
+var hero_cap := 4
+var heroes_spawned := 0
+var heroes_fallen := 0
+var dens_cleared_by_heroes := 0
+var market_sales := 0
+var taverns := 0
+var markets := 0
+var shrines := 0
+var bounties := {} # den tile -> {reward}
+var bounties_posted := 0
+var bounties_paid := 0
+var loot_piles := {} # tile -> gold
 
 # Provisions capacity of the realm: complete farms feed people.
 func fed_capacity() -> int:
@@ -150,6 +210,12 @@ func complete_building(p: Vector2i) -> void:
 		"guardhouse":
 			for i in GUARDS_PER_GUARDHOUSE:
 				_spawn_guard(p)
+		"tavern":
+			taverns += 1
+		"market":
+			markets += 1
+		"shrine":
+			shrines += 1
 	last_event = "Finished building " + b.kind
 
 func take_tax(p: Vector2i) -> int:
@@ -168,10 +234,14 @@ func update() -> void:
 	if raids_enabled:
 		_dens_tick()
 		_assign_guards()
+	if heroes_enabled:
+		_attraction_tick()
+		_assign_heroes()
 	for a in agents:
 		a.update()
-	if raids_enabled:
-		_combat_step()
+	# Combat is adjacency-driven; with no foes around it is a cheap no-op,
+	# so it runs regardless of the raid toggle (hero tests rely on it).
+	_combat_step()
 	_reap()
 	_guard_respawn()
 	# Growth from delivered labor, when the larder can support another mouth.
@@ -687,13 +757,6 @@ func _nearest_complete(kind: String, from: Vector2i) -> Vector2i:
 			best = p
 	return best
 
-func adjacent_guards(t: Vector2i) -> int:
-	var n := 0
-	for a in agents:
-		if a.kind == "guard" and a.adjacent_to(t):
-			n += 1
-	return n
-
 func _nearest_raid_target(from: Vector2i) -> Vector2i:
 	for kind in ["farm", "house"]:
 		var best := Vector2i(-1, -1)
@@ -737,6 +800,12 @@ func _raze_building(p: Vector2i) -> void:
 			pop_cap = maxi(1, pop_cap - 3)
 		"guardhouse":
 			_remove_guards_of(p)
+		"tavern":
+			taverns -= 1
+		"market":
+			markets -= 1
+		"shrine":
+			shrines -= 1
 	buildings.erase(p)
 	buildings_razed += 1
 	last_event = "Goblins razed the %s!" % b.kind
@@ -873,26 +942,324 @@ func _patrol_spot(home: Vector2i) -> Vector2i:
 			return p
 	return home
 
+# --- M4: heroes & attraction ------------------------------------------------
+
+func post_bounty(den_pos: Vector2i) -> bool:
+	# The player's one-tap nudge: a flag with gold on it. Heroes weigh it
+	# against everything else and decide for themselves.
+	if not dens.has(den_pos):
+		last_event = "No den there to bounty"
+		return false
+	if gold < BOUNTY_FEE:
+		last_event = "Not enough gold for the bounty"
+		return false
+	gold -= BOUNTY_FEE
+	# The fee funds the flag; only the net amount is ever claimable.
+	var net: int = BOUNTY_FEE - BOUNTY_OVERHEAD
+	if bounties.has(den_pos):
+		bounties[den_pos].reward += net
+	else:
+		bounties[den_pos] = {"reward": net}
+		bounties_posted += 1
+	last_event = "A bounty flag flies over the den!"
+	return true
+
+func _attraction_tick() -> void:
+	# The realm's reputation does the recruiting: a periodic roll whose
+	# weights come straight from the building mix.
+	_hero_attraction_left -= 1
+	if _hero_attraction_left > 0:
+		return
+	_hero_attraction_left = hero_attraction_ticks
+	if _count_kind("hero") >= hero_cap:
+		return
+	var mix := _attraction_mix()
+	if mix.is_empty():
+		return
+	if rng.randf() > hero_arrival_chance:
+		return
+	_spawn_hero(_weighted_intent(mix))
+
+func _attraction_mix() -> Dictionary:
+	var mix := {}
+	for p in buildings:
+		var b: Dictionary = buildings[p]
+		if not b.complete:
+			continue
+		for cls in HERO_CLASSES:
+			if HERO_CLASSES[cls].attracted_by == b.kind:
+				mix[cls] = int(mix.get(cls, 0)) + 1
+	return mix
+
+func _spawn_hero(cls: String) -> void:
+	var spot := _edge_spot()
+	if spot.x < 0:
+		return
+	var a = AgentC.new()
+	a.setup(self, "hero", spot)
+	a.hero_class = cls
+	a.max_hp = int(HERO_CLASSES[cls].hp)
+	a.hp = a.max_hp
+	a.home = _nearest_complete(HERO_CLASSES[cls].attracted_by, spot)
+	if a.home.x < 0:
+		a.home = keep_pos
+	a.assign(a.home, AgentC.RECRUIT)
+	agents.append(a)
+	heroes_spawned += 1
+	last_event = "A %s arrives, drawn by tales of the realm" % HERO_CLASSES[cls].title
+
+func _edge_spot() -> Vector2i:
+	# Heroes wander in from the wild borders, on ground actually connected
+	# to the realm.
+	for i in 20:
+		var p: Vector2i
+		match rng.randi_range(0, 3):
+			0:
+				p = Vector2i(rng.randi_range(1, world.SIZE_X - 2), 1)
+			1:
+				p = Vector2i(rng.randi_range(1, world.SIZE_X - 2), world.SIZE_Y - 2)
+			2:
+				p = Vector2i(1, rng.randi_range(1, world.SIZE_Y - 2))
+			_:
+				p = Vector2i(world.SIZE_X - 2, rng.randi_range(1, world.SIZE_Y - 2))
+		if _open_ground(p) and not find_path(p, keep_pos).is_empty():
+			return p
+	return Vector2i(-1, -1)
+
+func _count_kind(kind: String) -> int:
+	var n := 0
+	for a in agents:
+		if a.kind == kind:
+			n += 1
+	return n
+
+func _count_complete(kind: String) -> int:
+	var n := 0
+	for p in buildings:
+		var b: Dictionary = buildings[p]
+		if b.kind == kind and b.complete:
+			n += 1
+	return n
+
+func _nearest_den(from: Vector2i) -> Vector2i:
+	var best := Vector2i(-1, -1)
+	var best_d := INF
+	for p in dens:
+		var d := Vector2(p).distance_squared_to(Vector2(from))
+		if d < best_d:
+			best_d = d
+			best = p
+	return best
+
+func _nearest_pile(from: Vector2i) -> Vector2i:
+	var best := Vector2i(-1, -1)
+	var best_d := INF
+	for p in loot_piles:
+		var d := Vector2(p).distance_squared_to(Vector2(from))
+		if d < best_d:
+			best_d = d
+			best = p
+	return best
+
+func _best_bounty(from: Vector2i) -> Vector2i:
+	var best := Vector2i(-1, -1)
+	var best_reward := -1
+	var best_d := INF
+	for p in bounties:
+		var reward: int = int(bounties[p].reward)
+		var d := Vector2(p).distance_squared_to(Vector2(from))
+		if reward > best_reward or (reward == best_reward and d < best_d):
+			best_reward = reward
+			best_d = d
+			best = p
+	return best
+
+func hero_rest_spot(h) -> Vector2i:
+	var t := _nearest_complete("tavern", h.tile())
+	return t if t.x >= 0 else keep_pos
+
+func hero_goal_scores(h) -> Dictionary:
+	# The heart of indirect control: pure, table-driven incentive scoring.
+	# Personality weights from the content row decide what this hero cares
+	# about; the world decides what is actually available.
+	var w: Dictionary = HERO_CLASSES[h.hero_class].weights
+	var scores := {}
+	if h.pouch >= HERO_PURSE_TARGET and _count_complete("market") > 0:
+		scores["shop"] = 10 + int(w.treasure)
+	if h.fatigue >= HERO_FATIGUE_MAX:
+		scores["rest"] = 12 + h.fatigue
+	if not bounties.is_empty() and int(w.bounty) > 0:
+		var best_reward := 0
+		for p in bounties:
+			best_reward = maxi(best_reward, int(bounties[p].reward))
+		# The flag itself counts for a lot (the player asked for it), and a
+		# fatter flag scores higher — stacking bounties really does attract.
+		scores["bounty"] = int(w.bounty) * 2 + int(best_reward / 4.0)
+	if int(w.smite_evil) > 0 and not dens.is_empty():
+		var top := 1
+		for p in dens:
+			top = maxi(top, int(dens[p].level))
+		scores["smite"] = int(w.smite_evil) + top
+	if int(w.treasure) > 0 and not loot_piles.is_empty():
+		var best_gold := 0
+		for p in loot_piles:
+			best_gold = maxi(best_gold, int(loot_piles[p]))
+		# A pile is certain gold; a bounty means a fight first. Risk-adjusted,
+		# free coin on the ground scores a good deal higher.
+		scores["treasure"] = int(w.treasure) * 2 + int(best_gold / 4.0)
+	if int(w.assist) > 0 and _nearest_free_site(h.tile()).x >= 0:
+		scores["assist"] = int(w.assist)
+	scores["patrol"] = 1
+	return scores
+
+func _best_hero_goal(scores: Dictionary) -> String:
+	# Deterministic pick: highest score wins, ties break toward the fixed
+	# priority order.
+	var best := "patrol"
+	var best_v := -1
+	for g in HERO_GOAL_PRIORITY:
+		if scores.has(g) and int(scores[g]) > best_v:
+			best_v = int(scores[g])
+			best = g
+	return best
+
+func _assign_heroes() -> void:
+	for a in agents:
+		if a.kind != "hero":
+			continue
+		_hero_level_check(a)
+		if a.state != AgentC.IDLE or a.fighting:
+			continue
+		if a.decision_left > 0:
+			a.decision_left -= 1
+			continue
+		_hero_decide(a)
+
+func _hero_decide(h) -> void:
+	var goal := _best_hero_goal(hero_goal_scores(h))
+	h.goal = goal
+	h.decision_left = 2 + rng.randi_range(0, 4)
+	match goal:
+		"shop":
+			h.assign(_nearest_complete("market", h.tile()), AgentC.SHOP)
+		"rest":
+			h.assign(hero_rest_spot(h), AgentC.REST)
+		"smite":
+			var den := _nearest_den(h.tile())
+			h.quest_den = den
+			h.assign(den_doorstep(den, h.tile()), AgentC.ASSAULT)
+		"bounty":
+			var den := _best_bounty(h.tile())
+			h.quest_den = den
+			h.assign(den_doorstep(den, h.tile()), AgentC.ASSAULT)
+		"treasure":
+			h.assign(_nearest_pile(h.tile()), AgentC.TREASURE)
+		"assist":
+			h.assign(_nearest_free_site(h.tile()), AgentC.ASSIST)
+		_:
+			h.assign(_wilds_spot(keep_pos, 5, h.tile()), AgentC.WANDER)
+
+func _hero_level_check(h) -> void:
+	while h.xp >= HERO_XP_PER_LEVEL * h.level:
+		h.xp -= HERO_XP_PER_LEVEL * h.level
+		h.level += 1
+		h.max_hp += 2
+		h.hp = h.max_hp
+		last_event = "%s rises to level %d" % [HERO_CLASSES[h.hero_class].title, h.level]
+
+func _hero_gain_xp(h, n: int) -> void:
+	h.xp += n
+	_hero_level_check(h)
+
+func hero_shop(h) -> void:
+	# Heroes bank their plunder at the market; the realm profits from
+	# the trade. Loot in the pockets is what makes heroes come at all.
+	if h.pouch > 0:
+		gold += h.pouch
+		market_sales += h.pouch
+		h.pouch = 0
+		last_event = "The %s spends loot at the market" % HERO_CLASSES[h.hero_class].title
+	h.fatigue += 1
+
+func hero_rest(h) -> void:
+	h.fatigue = 0
+	h.hp = h.max_hp
+
+func hero_take_loot(h) -> void:
+	if loot_piles.has(h.target):
+		h.pouch += int(loot_piles[h.target])
+		loot_piles.erase(h.target)
+		last_event = "The %s pockets the dropped loot" % HERO_CLASSES[h.hero_class].title
+	h.fatigue += 1
+
+func hero_assist(h) -> void:
+	# Occasional flavor: a fresh hero with nothing better to score lends a
+	# hand at a construction site. Never required — assist is the lowest
+	# personality weight.
+	if buildings.has(h.target) and not buildings[h.target].complete:
+		tick_build(h.target)
+	h.fatigue += 1
+
+func hero_assault_tick(h) -> void:
+	# Den damage flows from the combat step's siege accounting; here the
+	# hero only notices the victory and moves on.
+	if not dens.has(h.quest_den):
+		h.state = AgentC.IDLE
+		h.purpose = ""
+		h.fatigue += 1
+		last_event = "The %s's work at the den is done" % HERO_CLASSES[h.hero_class].title
+		return
+	h.work_left = 1
+
+func adjacent_foes(a) -> int:
+	# Foes that make a fighter hold ground: guards and heroes hem goblins
+	# in; goblins hem heroes in.
+	var n := 0
+	for other in agents:
+		if other == a:
+			continue
+		if a.kind == "goblin":
+			if (other.kind == "guard" or other.kind == "hero") \
+					and other.adjacent_to(a.tile()):
+				n += 1
+		elif a.kind == "hero":
+			if other.kind == "goblin" and other.adjacent_to(a.tile()):
+				n += 1
+	return n
+
 func _combat_step() -> void:
 	# Simple attrition: foes on neighbouring tiles trade blows. A fighter who
 	# drops to the flee threshold breaks for home; anyone at 0 hp is reaped.
+	# Heroes join with melee weight = level, so veteran heroes hit harder.
 	var gobs := []
 	var guards := []
+	var heroes := []
 	for a in agents:
 		if a.kind == "goblin":
 			gobs.append(a)
 		elif a.kind == "guard":
 			guards.append(a)
+		elif a.kind == "hero":
+			heroes.append(a)
 	for gob in gobs:
 		var attackers := 0
 		for g in guards:
 			if g.adjacent_to(gob.tile()):
 				attackers += 1
+		for h in heroes:
+			if h.adjacent_to(gob.tile()):
+				attackers += h.level
 		if attackers > 0:
 			# Combat interrupts behavior: the goblin turns to defend itself.
 			gob.fighting = true
 			gob.behavior_left = 0
+			var wounded: bool = gob.hp > 0
 			gob.hurt(attackers)
+			if wounded and gob.hp <= 0:
+				# The kill is credited to the heroes who landed it.
+				for h in heroes:
+					if h.adjacent_to(gob.tile()):
+						_hero_gain_xp(h, 1)
 	for g in guards:
 		var enemies := 0
 		for gob in gobs:
@@ -900,38 +1267,87 @@ func _combat_step() -> void:
 				enemies += 1
 		if enemies > 0:
 			g.hurt(enemies)
+	for h in heroes:
+		var enemies := 0
+		for gob in gobs:
+			if gob.adjacent_to(h.tile()):
+				enemies += 1
+		if enemies > 0:
+			h.fighting = true
+			h.hurt(enemies)
 	for p in dens.duplicate():
 		var den: Dictionary = dens[p]
 		var besiegers := 0
 		for g in guards:
 			if g.adjacent_to(p):
 				besiegers += 1
+		for h in heroes:
+			if h.adjacent_to(p):
+				besiegers += h.level
 		if besiegers > 0:
 			den.hp -= besiegers
 			if den.hp <= 0:
 				_clear_den(p)
 
 func _clear_den(p: Vector2i) -> void:
+	var den: Dictionary = dens[p]
+	var spoils: int = int(den.gold)
 	dens.erase(p)
 	dens_cleared += 1
 	for a in agents:
 		if a.kind == "goblin" and a.home == p and not _removals.has(a):
 			_removals.append(a)
-	# A cleared lair buys peace — but the wild always creeps back.
-	den_respawn_rest_left = den_respawn_rest + rng.randi_range(0, 600)
-	last_event = "The goblin den was cleared!"
+	# The lair's plunder spills out where anyone quick can grab it.
+	if spoils > 0:
+		var door: Vector2i = den_doorstep(p, keep_pos)
+		loot_piles[door] = int(loot_piles.get(door, 0)) + spoils
+	var reward := 0
+	if bounties.has(p):
+		reward = int(bounties[p].reward)
+		bounties.erase(p)
+	var claimant = null
+	for a in agents:
+		if a.kind == "hero" and a.adjacent_to(p):
+			claimant = a
+			break
+	if claimant != null:
+		_hero_gain_xp(claimant, 5)
+		dens_cleared_by_heroes += 1
+		if reward > 0:
+			claimant.pouch += reward
+			bounties_paid += reward
+			last_event = "The %s clears the den and claims the bounty!" \
+				% HERO_CLASSES[claimant.hero_class].title
+		else:
+			last_event = "A %s storms the goblin den and prevails!" \
+				% HERO_CLASSES[claimant.hero_class].title
+	elif reward > 0:
+		last_event = "The den fell to the watch; the bounty goes unclaimed"
+	else:
+		last_event = "The goblin den was cleared!"
 
 func _reap() -> void:
 	var guard_fell := false
+	var fallen_hero_class := ""
 	for a in agents:
-		if (a.kind == "guard" or a.kind == "goblin") and a.hp <= 0 \
-				and not _removals.has(a):
+		if a.hp <= 0 and (a.kind == "guard" or a.kind == "goblin" \
+				or a.kind == "hero") and not _removals.has(a):
 			_removals.append(a)
-			if a.kind == "guard":
-				guards_fallen += 1
-				guard_fell = true
+			match a.kind:
+				"guard":
+					guards_fallen += 1
+					guard_fell = true
+				"hero":
+					# A fallen hero drops their purse where anyone quick
+					# — a rogue, say — can race to it.
+					heroes_fallen += 1
+					fallen_hero_class = a.hero_class
+					if a.pouch > 0:
+						loot_piles[a.tile()] = int(loot_piles.get(a.tile(), 0)) + a.pouch
 	if guard_fell:
 		last_event = "A guard fell in battle!"
+	elif fallen_hero_class != "":
+		last_event = "A %s has fallen in battle!" % HERO_CLASSES[fallen_hero_class].title
 	for x in _removals:
 		agents.erase(x)
 	_removals.clear()

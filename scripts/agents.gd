@@ -20,6 +20,14 @@ const INTERCEPT := "intercept"
 const PATROL := "patrol"
 const ASSAULT := "assault"
 
+# Hero quest purposes (M4). ASSAULT is shared with the guard stub; the rest
+# are hero-only legs of the fight/rest/shop loop.
+const RECRUIT := "recruit"
+const SHOP := "shop"
+const REST := "rest"
+const TREASURE := "treasure"
+const ASSIST := "assist"
+
 # Goblin behavior states (personal, weighted-random; the den overlays its
 # own mood on the idle warband). LURK is never a movement purpose.
 const LURK := "lurk"
@@ -49,6 +57,14 @@ var behavior_left := 0
 var fighting := false
 var heal_cd := 0
 var loot_kind := ""
+# Hero layer (M4): class row id, scored goal, and the usual leveling kit.
+var hero_class := ""
+var goal := ""
+var quest_den := Vector2i.ZERO
+var level := 1
+var xp := 0
+var fatigue := 0
+var decision_left := 0
 
 func setup(k, kind_value: String, spawn: Vector2i) -> void:
 	kingdom = k
@@ -101,13 +117,20 @@ func flee_to(dest: Vector2i) -> void:
 func hurt(n: int) -> void:
 	hp -= n
 	if hp > 0 and hp <= FLEE_AT and state != FLEEING:
-		flee_to(home)
+		# Fighters break for home. Heroes fall back to the tavern (or the
+		# keep when there is none) and come back once rested and healed.
+		if kind == "hero":
+			fatigue = maxi(fatigue, kingdom.HERO_FATIGUE_MAX)
+			flee_to(kingdom.hero_rest_spot(self))
+		else:
+			flee_to(home)
 
 func update() -> void:
 	# Combat interrupts behavior: while engaged, hold ground and defend; once
-	# the threat passes, resume whatever was underway.
-	if fighting:
-		if kingdom.adjacent_guards(tile()) == 0:
+	# the threat passes, resume whatever was underway. A fighter already
+	# breaking for home (FLEEING) keeps running — breaking off is the point.
+	if state != FLEEING and fighting:
+		if kingdom.adjacent_foes(self) == 0:
 			fighting = false
 		else:
 			return
@@ -157,10 +180,17 @@ func _arrived() -> void:
 				FORAGE:
 					state = ACTING
 					work_left = kingdom.GATHER_TICKS
-				WANDER, PROWL:
-					# Loiter where the behavior put us until it expires.
+				RECRUIT, WANDER, PROWL:
+					# Settle in / loiter where the behavior put us until it
+					# expires.
 					state = IDLE
 					purpose = ""
+				SHOP, TREASURE, ASSIST:
+					state = ACTING
+					work_left = 1
+				REST:
+					state = ACTING
+					work_left = kingdom.HERO_REST_TICKS
 		RETURNING:
 			if purpose == RAID:
 				kingdom.raid_returned(self)
@@ -176,6 +206,12 @@ func _arrived() -> void:
 					purpose = ""
 				"guard":
 					hp = max_hp
+					state = IDLE
+					purpose = ""
+				"hero":
+					# Lick wounds at the tavern; the next decision will be
+					# rest, which heals.
+					fighting = false
 					state = IDLE
 					purpose = ""
 				_:
@@ -213,7 +249,27 @@ func _finish_work() -> void:
 			loot_kind = "food"
 			state = RETURNING
 			path = kingdom.find_path(tile(), kingdom.den_doorstep(home, tile()))
-		INTERCEPT, ASSAULT, PATROL:
+		SHOP:
+			kingdom.hero_shop(self)
+			state = IDLE
+			purpose = ""
+		REST:
+			kingdom.hero_rest(self)
+			state = IDLE
+			purpose = ""
+		TREASURE:
+			kingdom.hero_take_loot(self)
+			state = IDLE
+			purpose = ""
+		ASSIST:
+			kingdom.hero_assist(self)
+			state = IDLE
+			purpose = ""
+		ASSAULT:
+			# Hero work: the kingdom decides whether the quest continues
+			# (keeps ACTING) or the den fell (sets IDLE).
+			kingdom.hero_assault_tick(self)
+		INTERCEPT, PATROL:
 			state = IDLE
 			purpose = ""
 

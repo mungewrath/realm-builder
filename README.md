@@ -1,4 +1,4 @@
-# Majesty — Fantasy Kingdom Sim
+# Realm Builder — Fantasy Kingdom Sim
 
 A real-time, indirect-control fantasy kingdom sim (Godot 4), prototyped
 headless on a Raspberry Pi 5 and playable on any device via the web build.
@@ -57,6 +57,9 @@ godot --headless --script tests/inspect_test.gd
 # Run the raid tests (dens, warbands, guards, den clearing)
 godot --headless --script tests/raids_test.gd
 
+# Run the hero tests (attraction, incentive scoring, bounty flow, loot)
+godot --headless --script tests/heroes_test.gd
+
 # First editor scan (builds .godot/ cache, registers class_name)
 godot --headless --editor --quit
 
@@ -113,7 +116,7 @@ unattended, enable linger: `sudo loginctl enable-linger $USER`.
 project.godot          Godot project config (gl_compatibility renderer)
 scenes/main.tscn       Main scene (UI + game view)
 scripts/kingdom.gd     Pure simulation logic (no UI dependencies)
-scripts/agents.gd      Pure sim agents: peasants, tax collector, goblin raiders, guards
+scripts/agents.gd      Pure sim agents: peasants, tax collector, goblin raiders, guards, heroes
 scripts/descriptions.gd  Inspector flavor text (blurbs, vague statuses)
 scripts/main.gd        View layer: wires UI to the sim
 scripts/*.gd.uid       Godot stable resource IDs (tracked in git)
@@ -121,6 +124,7 @@ tests/sim_test.gd      Headless sim test
 tests/agents_test.gd   Headless agent tests (construction, tax, delivery, deadlock)
 tests/inspect_test.gd  Headless inspector content tests
 tests/raids_test.gd    Headless raid tests (dens, cooldowns, razes, guards, clearing)
+tests/heroes_test.gd   Headless hero tests (attraction, scoring, bounties, loot)
 server/serve_https.py  LAN HTTPS server for the web build
 builds/web/            Exported web build (regenerable, not committed)
 export_presets.cfg     Web export preset (thread support off)

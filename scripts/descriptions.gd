@@ -8,6 +8,9 @@ const BUILDING_TITLES := {
 	"farm": "Farm",
 	"house": "House",
 	"guardhouse": "Guardhouse",
+	"tavern": "Tavern",
+	"market": "Market",
+	"shrine": "Shrine",
 }
 
 const BUILDING_BLURBS := {
@@ -15,10 +18,28 @@ const BUILDING_BLURBS := {
 	"farm": "Golden rows of grain. Peasants walk out from the keep to work the soil and haul provisions home. Goblins are said to raid farms first.",
 	"house": "A steep-roofed cottage. Each one raises the number of souls the keep can feed, and owes the crown a slow drip of taxes.",
 	"guardhouse": "A squat stone watch-tower. It raises a small company of guards who patrol the nearby fields and drive off raiders.",
+	"tavern": "A smoky hall of cheap ale and tall tales. Adventurers drift toward it — rogues especially — and rest here between ventures.",
+	"market": "Stalls and scales. Heroes spend their plunder here, and the realm profits from every trade.",
+	"shrine": "Quiet candles and old blessings. The righteous are drawn to it, and evil lairs draw their wrath.",
 }
+
+const LOOT_TITLE := "Dropped Loot"
+const LOOT_BLURB := "A purse left where someone fell. Quick hands and greedy hearts both know what to do with it."
 
 const DEN_TITLE := "Goblin Den"
 const DEN_BLURB := "A ragged cave mouth in the mountainside. Warbands creep out of it to burn and plunder — but it can be stormed and cleared."
+
+const HERO_TITLES := {
+	"rogue": "Rogue",
+	"warrior": "Warrior",
+	"paladin": "Paladin",
+}
+
+const HERO_BLURBS := {
+	"rogue": "A knife-for-hire who loves gold more than glory. Chases treasure flags and bounties, and keeps a share for himself.",
+	"warrior": "A sellsword who honors the flag. Bold in a fight, fond of ale, loyal to whoever posts a bounty.",
+	"paladin": "A holy warrior who smites evil and scorns loot. Fearless before dens; gentle with fresh construction.",
+}
 
 const UNIT_ROLES := {
 	"peasant": "Peasant",
@@ -39,25 +60,49 @@ static func den_title() -> String:
 static func den_blurb() -> String:
 	return DEN_BLURB
 
-static func den_status(den: Dictionary) -> String:
+static func loot_title() -> String:
+	return LOOT_TITLE
+
+static func loot_blurb() -> String:
+	return LOOT_BLURB
+
+static func loot_status(gold: int) -> String:
+	return "%d gold lie in the dirt, waiting for quick hands." % gold
+
+static func hero_title(a) -> String:
+	return "%s · level %d" % [HERO_TITLES.get(a.hero_class, "Adventurer"), a.level]
+
+static func hero_blurb(a) -> String:
+	return HERO_BLURBS.get(a.hero_class, "An adventurer of uncertain stripe.")
+
+static func unit_title(a) -> String:
+	if a.kind == "hero":
+		return hero_title(a)
+	return UNIT_ROLES.get(a.kind, "Stranger")
+
+static func den_status(den: Dictionary, p: Vector2i = Vector2i(-1, -1), sim = null) -> String:
 	# The den's current mood colors what a visitor would see.
+	var s := ""
 	match den.get("intent", ""):
 		"muster":
-			return "Calling its warband home; trouble is brewing."
+			s = "Calling its warband home; trouble is brewing."
 		"prowl":
-			return "Scouts prowl the fields, looking for fat targets."
+			s = "Scouts prowl the fields, looking for fat targets."
 		"forage":
-			return "Foragers range the wilds, hauling provisions home."
+			s = "Foragers range the wilds, hauling provisions home."
 		"rest":
-			return "Licking wounds and counting loot after a raid."
+			s = "Licking wounds and counting loot after a raid."
 		_:
 			match clampi(int(den.get("level", 1)), 1, 3):
 				1:
-					return "Scarcely more than a camp — but its warbands are hungry."
+					s = "Scarcely more than a camp — but its warbands are hungry."
 				2:
-					return "A busy warren; the raids grow frequent and bold."
+					s = "A busy warren; the raids grow frequent and bold."
 				_:
-					return "A thriving warren of loot and fire. Cleared, it would be a boon."
+					s = "A thriving warren of loot and fire. Cleared, it would be a boon."
+	if sim != null and p.x >= 0 and sim.bounties.has(p):
+		s += " A bounty of %d gold flies over it." % int(sim.bounties[p].reward)
+	return s
 
 static func building_status(kind: String, p: Vector2i, b: Dictionary, sim) -> String:
 	if not b.complete:
@@ -69,6 +114,12 @@ static func building_status(kind: String, p: Vector2i, b: Dictionary, sim) -> St
 			return _farm_status(p, sim)
 		"guardhouse":
 			return _guardhouse_status(p, sim)
+		"tavern":
+			return "The fire is warm and the ale is cheap; adventurers trade rumors of gold and glory."
+		"market":
+			return "Traders report brisk business; heroes pawn their plunder here."
+		"shrine":
+			return "Candles burn for the realm's protectors."
 		"castle":
 			return "The realm numbers %d souls, and the ledger grows with every collector's round." % sim.pop
 	return ""
@@ -125,7 +176,23 @@ static func _guardhouse_status(p: Vector2i, sim) -> String:
 	return "Guards drill in the yard, spears ready."
 
 static func agent_line(a) -> String:
-	return "%s — %s" % [UNIT_ROLES.get(a.kind, "Stranger"), agent_activity(a)]
+	var role: String = unit_title(a)
+	return "%s — %s" % [role, agent_activity(a)]
+
+static func _hero_home_name(a) -> String:
+	# The hero's recruiting hall, if the sim told us; otherwise the keep.
+	var kind := ""
+	if "kingdom" in a and a.kingdom != null and a.kingdom.buildings.has(a.home):
+		kind = a.kingdom.buildings[a.home].kind
+	match kind:
+		"tavern":
+			return "tavern"
+		"guardhouse":
+			return "guardhouse"
+		"shrine":
+			return "shrine"
+		_:
+			return "keep"
 
 static func agent_activity(a) -> String:
 	if a.state == "fleeing":
@@ -134,9 +201,49 @@ static func agent_activity(a) -> String:
 				return "slinking home to the den"
 			"guard":
 				return "retreating to dress wounds"
+			"hero":
+				return "falling back to lick wounds"
 			_:
 				return "running from danger!"
 	match a.kind:
+		"hero":
+			if a.fighting:
+				return "fighting for their life!"
+			match a.state:
+				"idle":
+					if a.adjacent_to(a.home):
+						return "mulling plans at the %s" % _hero_home_name(a)
+					return "weighing their next venture"
+				"to_target":
+					match a.purpose:
+						"assault":
+							if a.goal == "bounty":
+								return "riding out on the bounty"
+							return "riding out to smite evil"
+						"shop":
+							return "walking to market with heavy pockets"
+						"rest":
+							return "seeking a bed and a hot meal"
+						"treasure":
+							return "racing to dropped loot"
+						"assist":
+							return "off to lend a hand"
+						_:
+							return "strolling the realm"
+				"acting":
+					match a.purpose:
+						"rest":
+							return "resting and recovering"
+						"shop":
+							return "spending loot at the market"
+						"treasure":
+							return "gathering dropped coins"
+						"assist":
+							return "hammering alongside the builders"
+						"assault":
+							return "storming the goblin den"
+						_:
+							return "about their business"
 		"collector":
 			match a.state:
 				"idle":

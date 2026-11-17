@@ -6,6 +6,7 @@ func _initialize() -> void:
 	var sim = load("res://scripts/kingdom.gd").new()
 	sim.attach_world(WorldC)
 	sim.raids_enabled = false # exact starting-state accounting; raids tested separately
+	sim.heroes_enabled = false
 	var failed := false
 
 	if sim.gold != 50 or sim.pop != 5 or sim.pop_cap != 5:

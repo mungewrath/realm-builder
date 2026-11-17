@@ -6,6 +6,11 @@ const MOUNTAIN := 3
 const SIZE_X := 48
 const SIZE_Y := 32
 
+const DIRS_ALL := [
+	Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+	Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1),
+]
+
 var tiles := PackedByteArray()
 var rng := RandomNumberGenerator.new()
 
@@ -54,7 +59,9 @@ func _walkable(p: Vector2i) -> bool:
 	return t == GRASS or t == FOREST
 
 func find_path(from: Vector2i, to: Vector2i) -> Array:
-	# BFS on walkable tiles; returns tile list from after `from` to `to`.
+	# BFS on walkable tiles (8-directional so routes cut diagonally instead
+	# of marching all the way down one axis, then the other); returns tile
+	# list from after `from` to `to`.
 	var result: Array = []
 	if from == to or not in_bounds(to) or not _walkable(from) or not _walkable(to):
 		return result
@@ -65,11 +72,17 @@ func find_path(from: Vector2i, to: Vector2i) -> Array:
 	while head < queue.size():
 		var cur: Vector2i = queue[head]
 		head += 1
-		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		for d in DIRS_ALL:
 			var n: Vector2i = cur + d
-			if in_bounds(n) and _walkable(n) and not prev.has(n):
-				prev[n] = cur
-				queue.append(n)
+			if not in_bounds(n) or prev.has(n) or not _walkable(n):
+				continue
+			# Diagonal moves must not squeeze between two blocked tiles.
+			if d.x != 0 and d.y != 0:
+				if not _walkable(cur + Vector2i(d.x, 0)) \
+						or not _walkable(cur + Vector2i(0, d.y)):
+					continue
+			prev[n] = cur
+			queue.append(n)
 	if not prev.has(to):
 		return result
 	var cur := to
