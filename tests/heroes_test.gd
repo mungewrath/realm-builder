@@ -29,6 +29,8 @@ func _make_sim(seed_value: int):
 	WorldC.generate(seed_value)
 	var sim = load("res://scripts/kingdom.gd").new()
 	sim.attach_world(WorldC)
+	sim.set_fog_enabled(false) # hero accounting without fog gates
+	sim.keep_trickle = 0 # exact gold accounting; trickle has its own check
 	return sim
 
 func _count(sim, kind: String) -> int:

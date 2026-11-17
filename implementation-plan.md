@@ -161,14 +161,94 @@ Two small player-facing tweaks pulled out of band:
 Done when: build a tavern → a rogue arrives → rogues chase treasure and
 bounties → the player nudges with flags, never commands. ✓
 
-## M5 — Exploration & fog of war
+## M5 — Exploration & fog of war (built, awaiting playtest)
 
 - Map grows beyond viewport; pan and pinch-zoom were pulled forward into
   M1.5; remaining here: minimap.
-- Soft-edged fog; heroes reveal terrain as they explore; landmarks (ruins,
-  dens, shrines) appear as fog lifts; unexplored areas simulated cheaply.
-- Tests: fog reveal accounting, minimap sync, perf budget at full map reveal
-  on Pi (frame budget check via headless timing).
+- **Minimap** (bottom-right): the whole map in miniature showing only
+  charted ground — terrain, keep (gold), dens (red), heroes (white) — plus
+  a viewport outline; tap it to jump the main view there.
+- Fog (single permanent layer): the map starts dark and charted ground
+  stays lit for good. The keep charts its surroundings at start; heroes
+  reveal with a wide radius as they roam, workers with a small one;
+  goblins reveal nothing. The view softens tile edges by neighbor
+  sampling. Dens, loot piles and uncharted goblins stay hidden until the
+  fog lifts. The wilds are simulated exactly as before — fog is a view
+  gate plus one rule: you cannot build on unexplored land.
+- Heroes are not omniscient: dens and loot piles in uncharted land are
+  not options in their incentive scoring until the realm has charted
+  them (bounties are charted by construction — the player posts them on
+  dens they can see). With no venture on the books and wilds left, a
+  hero heads for the walk-nearest frontier about half the time
+  (coin-flip against patrolling, tie broken toward exploring), lighting
+  the map as it goes.
+- **Dev toggle**: the Dev panel (top-right) now has a "Fog of war" switch
+  that reveals/hides the whole map for troubleshooting; turning it back on
+  re-charts from the realm's actual footing.
+- Tests: `tests/fog_test.gd` (starting reveal, stamp accounting,
+  landmark/den discovery events, hero + worker reveal, build gating,
+  toggle round-trip, minimap data sync, headless perf budget — currently
+  ~5.8 ms/tick with the full sim running). Existing suites run with fog
+  disabled so their exact accounting is unaffected.
+
+Done when: the map starts mostly hidden, a roaming hero visibly lights up
+the wilds, a den surfaces on the minimap as fog lifts, and the Dev fog
+switch makes the whole map plain when troubleshooting.
+
+## M5.5 — Keep gold trickle (player feedback)
+
+Failure mode: build only non-income buildings (shrine, guardhouse…) until
+gold hits 0 and the realm is hard-stuck — no income without a farm, no farm
+without gold.
+
+- The keep's household now scrapes together a slow trickle: **5g per
+  minute** of normal time (`keep_trickle` / `keep_trickle_ticks` vars in
+  `kingdom.gd`), regardless of the building mix. Slow enough that farms
+  and taxes stay the real economy; fast enough to dig out of a mistake.
+- Tests: exact 5g/60-tick pacing in `tests/sim_test.gd`, plus a broke-realm
+  recovery scenario. Exact-accounting suites run with the trickle zeroed
+  (same pattern as fog).
+
+Done when: a realm at 0 gold can rebuild a farm after a couple of minutes
+without player income.
+
+## M5.6 — Hero halls, building taxes & pathfinding fix (player feedback)
+
+- Heroes no longer stroll in from the map edge: they spawn at a random
+  complete hall of their attracting kind (rogue → tavern, warrior →
+  guardhouse, paladin → shrine) and adopt it as home.
+- Building taxes: farms (1g, cap 6), houses (1g, cap 15, unchanged),
+  taverns (2g, cap 20), markets (3g, cap 30) all owe the collector;
+  shrines and guardhouses are crown service and earn nothing. The
+  collector's round now stops at any tax-bearing building; the inspector
+  mentions the till/tithe on taxed buildings.
+- Perf fix (uncovered while profiling): `find_path` flooded the whole
+  walkable map on every call, so a healthy realm (constant farm-worker
+  cycling) cost ~25 ms/tick on the Pi. BFS now exits the moment the
+  target is reached (same shortest paths): ~0.15 ms/tick for the same
+  economy, ~170x. The old fog-perf numbers had been measuring a
+  raid-collapsed economy, which is why this hid until now.
+- Tests: existing suites cover both behavior changes (hero arrival at the
+  hall that drew them, tax/deposit invariants over any building mix);
+  fog perf budget now passes with a healthy economy (0.7 ms/tick).
+
+## M5.7 — Hero resilience (player feedback)
+
+Rogues were dying near-instantly when a warband mobbed them.
+
+- Base hp scaled up: rogue 6 → 10, warrior 10 → 14, paladin 12 → 18.
+- Heroes swing harder than rank alone: melee weight is level + 1, so a
+  fresh hero can carve through a small warband. Den siege damage stays
+  level-based, so den-clear pacing is unchanged.
+- Heroes break off before dying: they flee at a third of max hp
+  (rank-and-file still break at the last breath), limp to the tavern,
+  heal, and come back.
+- Result: all three classes clear a 3-goblin mob — warrior and paladin
+  stand their ground (8/14 and 12/18 hp left), the rogue wipes it and
+  retreats at 4/10 to recover.
+
+Done when: a fresh hero survives the kind of ambush that used to delete
+rogues, and hero deaths feel like drama, not like losing a villager.
 
 ## M6 — Ecology & factions 2-3
 

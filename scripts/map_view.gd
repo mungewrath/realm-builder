@@ -32,6 +32,7 @@ const HERO_COLORS := {
 }
 
 const GOLD := Color(0.92, 0.78, 0.2)
+const FOG_DARK := Color(0.03, 0.04, 0.07)
 
 var world
 var sim
@@ -162,6 +163,7 @@ func _draw() -> void:
 		return
 	for x in world.SIZE_X:
 		for y in world.SIZE_Y:
+			var p := Vector2i(x, y)
 			var t: int = world.tiles[y * world.SIZE_X + x]
 			var origin := Vector2(x * TILE, y * TILE)
 			draw_rect(Rect2(origin, Vector2(TILE - 1, TILE - 1)), TERRAIN_COLORS[t])
@@ -174,18 +176,51 @@ func _draw() -> void:
 					_draw_water(origin, x, y)
 				3:
 					_draw_mountain(origin, x, y)
+			# M5 fog: dark until charted; charted ground stays lit
+			# permanently. Edges lighten a step so the veil reads soft.
+			var lvl := _fog_level(p)
+			if lvl < 2:
+				draw_rect(Rect2(origin, Vector2(TILE, TILE)),
+					FOG_DARK, _fog_alpha(p))
 	for p in buildings:
 		_draw_building(p, buildings[p])
 	if sim != null and sim.get("dens") != null:
 		for p in sim.dens:
+			# Landmarks surface as the fog lifts, and stay remembered.
+			if _fog_level(p) == 0:
+				continue
 			_draw_den(p, sim.dens[p])
 	if sim != null and sim.get("loot_piles") != null:
 		for p in sim.loot_piles:
+			if _fog_level(p) == 0:
+				continue
 			_draw_loot_pile(p)
 	if sim != null:
 		_draw_agents()
 	if selected.x >= 0:
 		draw_rect(Rect2(Vector2(selected * TILE), Vector2(TILE - 1, TILE - 1)), Color(0.95, 0.8, 0.3), false, 2.0)
+
+func _fog_level(p: Vector2i) -> int:
+	# 0 unseen, 2 revealed (revealed ground stays lit permanently).
+	# Fog off (dev) is level 2 everywhere.
+	if sim == null or not sim.fog_enabled:
+		return 2
+	if not world.in_bounds(p):
+		return 0
+	return 2 if sim.explored[p.y * world.SIZE_X + p.x] == 1 else 0
+
+func _fog_alpha(p: Vector2i) -> float:
+	# Unseen tiles next to charted ground get a lighter veil: soft edge.
+	var best := 0
+	for d in world.DIRS_ALL:
+		best = maxi(best, _fog_level(p + d))
+	return 0.75 if best == 2 else 0.9
+
+func center_on(p: Vector2i) -> void:
+	# Minimap jumps land the tapped tile in the middle of the viewport.
+	var view := get_viewport_rect().size
+	position = view / 2.0 - (Vector2(p) + Vector2(0.5, 0.5)) * TILE * scale.x
+	_clamp_position()
 
 func _draw_grass(origin: Vector2, x: int, y: int) -> void:
 	var dark := Color(0.28, 0.46, 0.2)
@@ -325,6 +360,11 @@ func _draw_site(p: Vector2i, kind: String) -> void:
 
 func _draw_agents() -> void:
 	for a in sim.agents:
+		# Goblins only show when someone from the realm can actually see
+		# them; the realm's own folk are always drawn (heroes are the
+		# explorers lighting the way).
+		if a.kind == "goblin" and _fog_level(a.tile()) < 2:
+			continue
 		var c: Vector2 = a.pos * float(TILE)
 		match a.kind:
 			"collector":

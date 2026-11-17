@@ -35,6 +35,9 @@ const WANDER := "wander"
 const PROWL := "prowl"
 const FORAGE := "forage"
 
+# M5: hero exploration leg — chart the unknown when nothing is known.
+const EXPLORE := "explore"
+
 var kind := "peasant"
 var pos := Vector2.ZERO
 var state := IDLE
@@ -65,6 +68,8 @@ var level := 1
 var xp := 0
 var fatigue := 0
 var decision_left := 0
+# M5 fog bookkeeping: last tile this agent already revealed from.
+var fog_tile := Vector2i(-1, -1)
 
 func setup(k, kind_value: String, spawn: Vector2i) -> void:
 	kingdom = k
@@ -116,7 +121,13 @@ func flee_to(dest: Vector2i) -> void:
 
 func hurt(n: int) -> void:
 	hp -= n
-	if hp > 0 and hp <= FLEE_AT and state != FLEEING:
+	# Fighters break for home before dying: rank-and-file at the last
+	# breath, heroes once they are clearly losing (a third of their health)
+	# — they limp to the tavern, heal, and come back.
+	var break_at := FLEE_AT
+	if kind == "hero":
+		break_at = maxi(1, int(ceil(max_hp / 3.0)))
+	if hp > 0 and hp <= break_at and state != FLEEING:
 		# Fighters break for home. Heroes fall back to the tavern (or the
 		# keep when there is none) and come back once rested and healed.
 		if kind == "hero":
@@ -180,7 +191,7 @@ func _arrived() -> void:
 				FORAGE:
 					state = ACTING
 					work_left = kingdom.GATHER_TICKS
-				RECRUIT, WANDER, PROWL:
+				RECRUIT, WANDER, PROWL, EXPLORE:
 					# Settle in / loiter where the behavior put us until it
 					# expires.
 					state = IDLE

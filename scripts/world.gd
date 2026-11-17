@@ -61,10 +61,14 @@ func _walkable(p: Vector2i) -> bool:
 func find_path(from: Vector2i, to: Vector2i) -> Array:
 	# BFS on walkable tiles (8-directional so routes cut diagonally instead
 	# of marching all the way down one axis, then the other); returns tile
-	# list from after `from` to `to`.
+	# list from after `from` to `to`. Exits the moment the target is
+	# reached — without that, every hop floods the whole map and the Pi
+	# drowns in pathfinding.
 	var result: Array = []
 	if from == to or not in_bounds(to) or not _walkable(from) or not _walkable(to):
 		return result
+	if _adjacent_walk(from, to):
+		return [to]
 	var prev := {}
 	prev[from] = from
 	var queue: Array = [from]
@@ -82,6 +86,12 @@ func find_path(from: Vector2i, to: Vector2i) -> Array:
 						or not _walkable(cur + Vector2i(0, d.y)):
 					continue
 			prev[n] = cur
+			if n == to:
+				cur = n
+				while cur != from:
+					result.push_front(cur)
+					cur = prev[cur]
+				return result
 			queue.append(n)
 	if not prev.has(to):
 		return result
@@ -90,6 +100,14 @@ func find_path(from: Vector2i, to: Vector2i) -> Array:
 		result.push_front(cur)
 		cur = prev[cur]
 	return result
+
+func _adjacent_walk(from: Vector2i, to: Vector2i) -> bool:
+	# One-step shortcut: a hop to a neighbouring walkable tile needs no
+	# search at all.
+	for d in DIRS_ALL:
+		if from + d == to and _walkable(from + d):
+			return true
+	return false
 
 func mountain_edge_sites() -> Array:
 	# Mountain tiles with at least one walkable neighbour — where dens can

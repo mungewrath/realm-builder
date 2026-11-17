@@ -1,6 +1,7 @@
 extends Node2D
 
 const Descriptions = preload("res://scripts/descriptions.gd")
+const MinimapC = preload("res://scripts/minimap.gd")
 
 const SIDE_PANEL_MIN_WIDTH := 900.0
 
@@ -22,6 +23,8 @@ var tick_timer: Timer
 var speed_panel: PanelContainer
 var speed_buttons := {}
 var speed_label: Label
+var fog_check: CheckButton
+var minimap: Control
 
 @onready var map_view := %MapView
 @onready var res_label: Label = %ResLabel
@@ -47,6 +50,7 @@ func _ready() -> void:
 	tavern_button.pressed.connect(_on_tavern_pressed)
 	market_button.pressed.connect(_on_market_pressed)
 	shrine_button.pressed.connect(_on_shrine_pressed)
+	_build_minimap()
 	_build_inspect_panel()
 	_build_speed_panel()
 	get_viewport().size_changed.connect(_layout_inspect_panel)
@@ -91,6 +95,7 @@ func _on_tile_clicked(p: Vector2i) -> void:
 func _on_tick() -> void:
 	sim.update()
 	map_view.queue_redraw()
+	minimap.queue_redraw()
 	_refresh()
 	_refresh_inspect()
 
@@ -177,14 +182,23 @@ func _layout_inspect_panel() -> void:
 		inspect_panel.offset_top = -h - 210.0
 		inspect_panel.offset_bottom = -210.0
 
-func _inspect(p: Vector2i) -> void:
-	var b = sim.buildings.get(p)
-	var den = sim.dens.get(p)
-	var pile_gold: int = int(sim.loot_piles.get(p, 0))
+func _agents_here(p: Vector2i) -> Array:
+	# Goblins in ground no one has charted stay hidden even when tapped blind.
 	var here := []
 	for a in sim.agents:
-		if a.tile() == p:
-			here.append(a)
+		if a.tile() != p:
+			continue
+		if a.kind == "goblin" and not sim.explored_at(p):
+			continue
+		here.append(a)
+	return here
+
+func _inspect(p: Vector2i) -> void:
+	var known: bool = sim.explored_at(p)
+	var b = sim.buildings.get(p)
+	var den = sim.dens.get(p) if known else null
+	var pile_gold: int = int(sim.loot_piles.get(p, 0)) if known else 0
+	var here := _agents_here(p)
 	if b == null and den == null and pile_gold <= 0 and here.is_empty():
 		_close_inspect()
 		return
@@ -243,10 +257,8 @@ func _inspect_agent(a) -> void:
 	inspect_title.text = Descriptions.unit_title(a)
 	inspect_blurb.text = Descriptions.hero_blurb(a) if a.kind == "hero" else ""
 	inspect_status.text = Descriptions.agent_activity(a)
-	var here := []
-	for u in sim.agents:
-		if u.tile() == selected_tile and u != a:
-			here.append(u)
+	var here := _agents_here(selected_tile)
+	here.erase(a)
 	_show_units(here, false)
 	inspect_action.visible = false
 
@@ -276,13 +288,11 @@ func _refresh_inspect() -> void:
 	_inspect_tile(selected_tile)
 
 func _inspect_tile(p: Vector2i) -> void:
+	var known: bool = sim.explored_at(p)
 	var b = sim.buildings.get(p)
-	var den = sim.dens.get(p)
-	var pile_gold: int = int(sim.loot_piles.get(p, 0))
-	var here := []
-	for a in sim.agents:
-		if a.tile() == p:
-			here.append(a)
+	var den = sim.dens.get(p) if known else null
+	var pile_gold: int = int(sim.loot_piles.get(p, 0)) if known else 0
+	var here := _agents_here(p)
 	if b == null and den == null and pile_gold <= 0:
 		# A razed, claimed, or vanished pin: close rather than stale text.
 		_close_inspect()
@@ -299,7 +309,33 @@ func _close_inspect() -> void:
 	inspect_action.visible = false
 	map_view.queue_redraw()
 
-# --- Dev tools: sim speed (1-3x) --------------------------------------------
+# --- Dev tools: sim speed (1-3x), fog of war toggle --------------------------
+
+func _build_minimap() -> void:
+	minimap = MinimapC.new()
+	minimap.name = "Minimap"
+	get_node("UI/Root").add_child(minimap)
+	minimap.setup(sim.world, sim, map_view)
+	minimap.tile_jump.connect(_on_minimap_jump)
+	_layout_minimap()
+
+func _layout_minimap() -> void:
+	# Bottom-right corner, above the build bar; the inspector card overlaps
+	# it while open, which is fine — dismiss to see the map.
+	var h: float = minimap.custom_minimum_size.y
+	minimap.anchor_left = 1.0
+	minimap.anchor_right = 1.0
+	minimap.anchor_top = 1.0
+	minimap.anchor_bottom = 1.0
+	minimap.offset_left = -minimap.custom_minimum_size.x - 12.0
+	minimap.offset_right = -12.0
+	minimap.offset_top = -h - 12.0
+	minimap.offset_bottom = -12.0
+
+func _on_minimap_jump(p: Vector2i) -> void:
+	map_view.center_on(p)
+	map_view.queue_redraw()
+	minimap.queue_redraw()
 
 func _build_speed_panel() -> void:
 	speed_panel = PanelContainer.new()
@@ -320,8 +356,15 @@ func _build_speed_panel() -> void:
 		b.pressed.connect(_set_speed.bind(s))
 		row.add_child(b)
 		speed_buttons[s] = b
+	# Fog of war can be switched off here to troubleshoot the map view.
+	fog_check = CheckButton.new()
+	fog_check.text = "Fog of war"
+	fog_check.button_pressed = sim.fog_enabled
+	fog_check.add_theme_font_size_override("font_size", 18)
+	fog_check.toggled.connect(_set_fog)
 	vb.add_child(speed_label)
 	vb.add_child(row)
+	vb.add_child(fog_check)
 	speed_panel.add_child(vb)
 	get_node("UI/Root").add_child(speed_panel)
 	speed_panel.anchor_left = 1.0
@@ -329,12 +372,18 @@ func _build_speed_panel() -> void:
 	speed_panel.offset_left = -260.0
 	speed_panel.offset_right = -16.0
 	speed_panel.offset_top = 76.0
-	speed_panel.offset_bottom = 150.0
+	speed_panel.offset_bottom = 190.0
 	_mark_speed_buttons()
 	dev_button.pressed.connect(_on_dev_pressed)
 
+func _set_fog(on: bool) -> void:
+	sim.set_fog_enabled(on)
+	map_view.queue_redraw()
+	minimap.queue_redraw()
+
 func _on_dev_pressed() -> void:
 	speed_panel.visible = not speed_panel.visible
+	fog_check.set_pressed_no_signal(sim.fog_enabled)
 	_mark_speed_buttons()
 
 func _set_speed(s: float) -> void:

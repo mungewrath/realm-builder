@@ -63,12 +63,12 @@ Attraction decays with distance, so placement shapes hero movement.
 | id | name | cost | produces | attracts | flags emitted | notes |
 |----|------|------|----------|----------|---------------|-------|
 | castle | Keep | (start) | pop cap +5, tax hub | peasants | defend (wide) | one per map; heroes pray here |
-| farm | Farm | 10g | food +2/tick | halfling | — | goblins raid these first |
-| house | House | 15g | pop cap +3 | peasants | — | from prototype |
-| market | Market | 30g | gold +1/tick per pop | merchant, rogue (shop) | guard_routes | enables hero shopping |
-| tavern | Tavern | 25g | morale, gossip | bard, rogue, halfling, barbarian | bounty (weak) | heroes gossip: reveals map hints |
-| guardhouse | Guardhouse | 30g | guards x2 | warrior, dwarf | defend (radius 6) | patrols clear nearby raider camps |
-| shrine | Shrine | 35g | bless radius | cleric, paladin | smite_evil (weak) | cures curses; undead avoid its aura |
+| farm | Farm | 10g | food +2/tick, tithe 1g (cap 6) | halfling | — | goblins raid these first |
+| house | House | 15g | pop cap +3, tax 1g (cap 15) | peasants | — | from prototype |
+| market | Market | 30g | gold +1/tick per pop, tax 3g (cap 30) | merchant, rogue (shop) | guard_routes | enables hero shopping |
+| tavern | Tavern | 25g | morale, gossip, tax 2g (cap 20) | bard, rogue, halfling, barbarian | bounty (weak) | heroes gossip: reveals map hints |
+| guardhouse | Guardhouse | 30g | guards x2 (no tax: crown service) | warrior, dwarf | defend (radius 6) | patrols clear nearby raider camps |
+| shrine | Shrine | 35g | bless radius (no tax: crown service) | cleric, paladin | smite_evil (weak) | cures curses; undead avoid its aura |
 | blacksmith | Blacksmith | 40g | gear points | dwarf, warrior | upgrade_hero | heroes with gear win more |
 | wizard_tower | Wizard Tower | 60g | mana trickle | wizard | explore (arcane sense) | reveals landmarks slowly |
 | ranger_hut | Ranger Hut | 30g | map edges revealed | ranger, druid | explore, protect | calms aggressive wildlife in radius |

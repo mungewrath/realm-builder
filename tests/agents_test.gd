@@ -25,6 +25,8 @@ func _make_sim(seed_value: int):
 	WorldC.generate(seed_value)
 	var sim = load("res://scripts/kingdom.gd").new()
 	sim.attach_world(WorldC)
+	sim.set_fog_enabled(false) # build/gating accounting without fog gates
+	sim.keep_trickle = 0 # exact gold accounting; trickle has its own check
 	# These tests assert exact economy accounting; goblin raids (M3) would
 	# raze buildings mid-test. Raid dynamics get their own suite. Heroes
 	# (M4) get one too — warriors from the guardhouse would muddy counts.

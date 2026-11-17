@@ -111,13 +111,22 @@ static func building_status(kind: String, p: Vector2i, b: Dictionary, sim) -> St
 		"house":
 			return _purse(int(b.tax))
 		"farm":
-			return _farm_status(p, sim)
+			var s := _farm_status(p, sim)
+			if int(b.tax) > 0:
+				s += " The tithe purse holds a few coins, waiting on the collector."
+			return s
 		"guardhouse":
 			return _guardhouse_status(p, sim)
 		"tavern":
-			return "The fire is warm and the ale is cheap; adventurers trade rumors of gold and glory."
+			var s := "The fire is warm and the ale is cheap; adventurers trade rumors of gold and glory."
+			if int(b.tax) > 0:
+				s += " The till is growing heavy."
+			return s
 		"market":
-			return "Traders report brisk business; heroes pawn their plunder here."
+			var s := "Traders report brisk business; heroes pawn their plunder here."
+			if int(b.tax) > 0:
+				s += " The toll box is filling."
+			return s
 		"shrine":
 			return "Candles burn for the realm's protectors."
 		"castle":
@@ -228,6 +237,8 @@ static func agent_activity(a) -> String:
 							return "racing to dropped loot"
 						"assist":
 							return "off to lend a hand"
+						"explore":
+							return "venturing into the unknown"
 						_:
 							return "strolling the realm"
 				"acting":

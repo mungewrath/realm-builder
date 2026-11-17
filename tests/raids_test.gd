@@ -32,6 +32,8 @@ func _make_sim(seed_value: int):
 	WorldC.generate(seed_value)
 	var sim = load("res://scripts/kingdom.gd").new()
 	sim.attach_world(WorldC)
+	sim.set_fog_enabled(false) # warband accounting without fog gates
+	sim.keep_trickle = 0 # exact gold accounting; trickle has its own check
 	# Heroes (M4) have their own suite: warrior attraction would muddy the
 	# raid/guard accounting here.
 	sim.heroes_enabled = false

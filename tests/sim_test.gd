@@ -5,8 +5,10 @@ func _initialize() -> void:
 	WorldC.generate(42)
 	var sim = load("res://scripts/kingdom.gd").new()
 	sim.attach_world(WorldC)
+	sim.set_fog_enabled(false) # exact starting-state accounting; fog tested separately
 	sim.raids_enabled = false # exact starting-state accounting; raids tested separately
 	sim.heroes_enabled = false
+	sim.keep_trickle = 0 # exact starting-state accounting; trickle checked below
 	var failed := false
 
 	if sim.gold != 50 or sim.pop != 5 or sim.pop_cap != 5:
@@ -72,6 +74,37 @@ func _initialize() -> void:
 		if not WorldC.in_bounds(a.tile()):
 			failed = true
 			print("FAIL: agent out of bounds at %s" % a.tile())
+
+	# Keep trickle: a broke realm still earns pocket coin, so the player can
+	# never be hard-stuck. 5g per minute (60 ticks) at normal pacing.
+	var broke = load("res://scripts/kingdom.gd").new()
+	var w2 = load("res://scripts/world.gd").new()
+	w2.generate(42)
+	broke.attach_world(w2)
+	broke.set_fog_enabled(false)
+	broke.raids_enabled = false
+	broke.heroes_enabled = false
+	broke.gold = 0
+	var g0: int = broke.gold
+	for i in 60:
+		broke.update()
+	if broke.gold - g0 != 5:
+		failed = true
+		print("FAIL: keep trickle wrong: %d over 60 ticks" % (broke.gold - g0))
+	# With the trickle sped up, a hard-stuck realm recovers buildability.
+	broke.keep_trickle_ticks = 2
+	var farm: Vector2i = broke.keep_pos + Vector2i(3, 3)
+	broke.gold = 0
+	for i in 30:
+		broke.update()
+		if broke.gold >= broke.BUILD_COSTS["farm"]:
+			break
+	if broke.gold < broke.BUILD_COSTS["farm"]:
+		failed = true
+		print("FAIL: broke realm never dug out: gold=%d" % broke.gold)
+	elif not broke.build_at("farm", farm):
+		failed = true
+		print("FAIL: recovered realm could not build")
 
 	print("RESULT: %s (gold=%d pop=%d/%d farms=%d houses=%d delivered=%d)" % ["PASS" if not failed else "FAIL", sim.gold, sim.pop, sim.pop_cap, sim.farms, sim.houses, sim.food_delivered])
 	quit(1 if failed else 0)

@@ -14,6 +14,16 @@ const BUILD_WORK_TICKS := 4
 const TAX_RATE_TICKS := 4
 const HOUSE_TAX_CAP := 15
 
+# Buildings that owe the crown taxes: rate per accrual round, purse cap.
+# Shrines and guardhouses are crown service — they earn nothing. Farms pay
+# a tithe on top of feeding the realm; markets earn best.
+const BUILD_TAX := {
+	"farm": {"rate": 1, "cap": 6},
+	"house": {"rate": 1, "cap": HOUSE_TAX_CAP},
+	"tavern": {"rate": 2, "cap": 20},
+	"market": {"rate": 3, "cap": 30},
+}
+
 const GUARDHOUSE_COST := 30
 const GUARDS_PER_GUARDHOUSE := 2
 const GUARD_PATROL_RADIUS := 6
@@ -58,27 +68,30 @@ const BUILD_COSTS := {
 # their own, score the world against their personality table, and act on
 # their own judgment. The player nudges with buildings, gold, and bounty
 # flags — never commands. Adding a class is a content row, not code.
+# Base stats are tuned so a fresh hero can handle a small goblin mob
+# (2-3 raiders): goblins hit for 1 each per round, a level-1 hero swings
+# for 2 and breaks off to heal before dying.
 const HERO_CLASSES := {
 	"rogue": {
 		"title": "Rogue",
 		"attracted_by": "tavern",
-		"hp": 6,
+		"hp": 10,
 		"weights": {"bounty": 4, "treasure": 9, "smite_evil": 1, "assist": 0},
 	},
 	"warrior": {
 		"title": "Warrior",
 		"attracted_by": "guardhouse",
-		"hp": 10,
+		"hp": 14,
 		"weights": {"bounty": 8, "treasure": 4, "smite_evil": 3, "assist": 3},
 	},
 	"paladin": {
 		"title": "Paladin",
 		"attracted_by": "shrine",
-		"hp": 12,
+		"hp": 18,
 		"weights": {"bounty": 3, "treasure": 0, "smite_evil": 9, "assist": 4},
 	},
 }
-const HERO_GOAL_PRIORITY := ["rest", "shop", "smite", "bounty", "treasure", "assist", "patrol"]
+const HERO_GOAL_PRIORITY := ["rest", "shop", "smite", "bounty", "treasure", "explore", "assist", "patrol"]
 
 const HERO_PURSE_TARGET := 10
 const HERO_FATIGUE_MAX := 5
@@ -86,6 +99,16 @@ const HERO_REST_TICKS := 10
 const HERO_XP_PER_LEVEL := 4
 const BOUNTY_FEE := 20
 const BOUNTY_OVERHEAD := 2 # the posting office's cut; the rest lands on the flag
+
+# M5 — exploration & fog of war. The map starts dark; the keep charts its
+# surroundings at the start, and heroes (keen eyes, long roam) and the
+# realm's workers chart more as they move. Charted ground stays revealed
+# permanently — no re-dimming. Goblins reveal nothing; the wild keeps its
+# secrets. Fog is presentation plus a build gate: the wilds are simulated
+# the same as ever, only unseen. Radii are vars so tests can tweak them.
+const KEEP_REVEAL := 7.0
+const HERO_REVEAL := 4.0
+const WORKER_REVEAL := 2.0
 
 var gold: int = START_GOLD
 var pop: int = START_POP
@@ -106,6 +129,12 @@ var shortage_grace := 20
 var deliveries := 0
 var tax_collected := 0
 var tax_deposited := 0
+
+# The keep's household scrapes together a slow trickle of coin (per minute
+# of normal time), so a realm that spends its last gold on the wrong
+# building can still dig itself out. Vars so tests/tuning can adjust.
+var keep_trickle := 5
+var keep_trickle_ticks := 60
 
 # M3 — goblins & guards. Dens squat on mountain edges; goblins live there
 # and run weighted-random behavior states (lurk/wander/prowl/forage), while
@@ -153,6 +182,13 @@ var bounties_posted := 0
 var bounties_paid := 0
 var loot_piles := {} # tile -> gold
 
+# M5 — fog state: one layer. `explored` is the map you have charted, and
+# charted ground stays lit for good.
+var fog_enabled := true
+var explored := PackedByteArray() # 0 unseen, 1 revealed (permanent)
+var tiles_explored := 0
+var landmarks_spotted := 0
+
 # Provisions capacity of the realm: complete farms feed people.
 func fed_capacity() -> int:
 	return farms * FARM_CAPACITY_POP
@@ -162,22 +198,90 @@ func attach_world(w) -> void:
 	rng.seed = 777
 	keep_pos = Vector2i(int(w.SIZE_X / 2.0), int(w.SIZE_Y / 2.0))
 	buildings[keep_pos] = {"kind": "castle", "complete": true, "tax": 0}
+	explored.resize(w.SIZE_X * w.SIZE_Y)
+	if fog_enabled:
+		_stamp_explored(keep_pos, KEEP_REVEAL)
+	else:
+		_reveal_everything()
 	for i in START_POP:
 		_spawn_peasant()
 	_spawn_dens()
+
+func set_fog_enabled(on: bool) -> void:
+	# Dev/tuning toggle. Turning fog back on re-charts from where the realm
+	# actually stands now: the keep's ground and every friendly agent.
+	if fog_enabled == on:
+		return
+	fog_enabled = on
+	for a in agents:
+		a.fog_tile = Vector2i(-1, -1)
+	if on:
+		explored.fill(0)
+		tiles_explored = 0
+		landmarks_spotted = 0
+		_fog_tick()
+	else:
+		_reveal_everything()
+
+func _reveal_everything() -> void:
+	explored.fill(1)
+	tiles_explored = explored.size()
+
+func _reveal_radius(a) -> float:
+	return HERO_REVEAL if a.kind == "hero" else WORKER_REVEAL
+
+func _stamp_explored(p: Vector2i, radius: float) -> void:
+	# Chart a disc of tiles around `p`; newly charted dens are landmarks.
+	var r := int(ceili(radius))
+	for dy in range(-r, r + 1):
+		for dx in range(-r, r + 1):
+			if Vector2(dx, dy).length() > radius:
+				continue
+			var q := p + Vector2i(dx, dy)
+			if not world.in_bounds(q):
+				continue
+			var i: int = q.y * world.SIZE_X + q.x
+			if explored[i] == 1:
+				continue
+			explored[i] = 1
+			tiles_explored += 1
+			if dens.has(q):
+				landmarks_spotted += 1
+				last_event = "A goblin den is spied in the wilds!"
+
+func _fog_tick() -> void:
+	if not fog_enabled:
+		return
+	for a in agents:
+		if a.kind == "goblin":
+			continue
+		var t: Vector2i = a.tile()
+		if t != a.fog_tile:
+			a.fog_tile = t
+			_stamp_explored(t, _reveal_radius(a))
+
+func explored_at(p: Vector2i) -> bool:
+	if not fog_enabled:
+		return true
+	return world.in_bounds(p) and explored[p.y * world.SIZE_X + p.x] == 1
 
 func find_path(from: Vector2i, to: Vector2i) -> Array:
 	return world.find_path(from, to)
 
 func can_build_at(p: Vector2i) -> bool:
-	return world != null and world.is_buildable(p) and not buildings.has(p)
+	if world == null or not world.is_buildable(p) or buildings.has(p):
+		return false
+	# You cannot raise walls on land no one has charted.
+	return explored_at(p)
 
 func build_at(kind: String, p: Vector2i) -> bool:
 	if not BUILD_COSTS.has(kind):
 		last_event = "Unknown building"
 		return false
 	if not can_build_at(p):
-		last_event = "Cannot build there"
+		last_event = "That land is unexplored" \
+			if (world != null and world.in_bounds(p) and not explored_at(p)) \
+			else "Cannot build there"
 		return false
 	var cost: int = BUILD_COSTS[kind]
 	if gold < cost:
@@ -226,6 +330,7 @@ func take_tax(p: Vector2i) -> int:
 
 func update() -> void:
 	tick += 1
+	_keep_trickle_tick()
 	if collector == null and houses > 0:
 		_spawn_collector()
 	_accrue_tax()
@@ -239,6 +344,7 @@ func update() -> void:
 		_assign_heroes()
 	for a in agents:
 		a.update()
+	_fog_tick()
 	# Combat is adjacency-driven; with no foes around it is a cheap no-op,
 	# so it runs regardless of the raid toggle (hero tests rely on it).
 	_combat_step()
@@ -259,6 +365,11 @@ func update() -> void:
 		shortage_mark = tick
 		_remove_peasant()
 		last_event = "The larder is bare; someone left"
+
+func _keep_trickle_tick() -> void:
+	# A soft floor under the economy: even a broke realm earns pocket coin.
+	if tick % int(keep_trickle_ticks) == 0:
+		gold += keep_trickle
 
 func warn_threat(threat: Vector2i, radius: float) -> int:
 	# Called by M3 raiders; peasants nearby run home. Stub for now.
@@ -338,8 +449,12 @@ func _accrue_tax() -> void:
 		return
 	for p in buildings:
 		var b: Dictionary = buildings[p]
-		if b.kind == "house" and b.complete:
-			b.tax = mini(b.tax + 1, HOUSE_TAX_CAP)
+		if not b.complete:
+			continue
+		var row: Dictionary = BUILD_TAX.get(b.kind, {})
+		if row.is_empty():
+			continue
+		b.tax = mini(int(b.tax) + int(row.rate), int(row.cap))
 
 func _assign_jobs() -> void:
 	for a in agents:
@@ -359,7 +474,7 @@ func _route_collector() -> void:
 	var stops := []
 	for p in buildings:
 		var b: Dictionary = buildings[p]
-		if b.kind == "house" and b.complete and b.tax > 0:
+		if b.complete and int(b.tax) > 0:
 			stops.append(p)
 	if stops.is_empty():
 		return
@@ -992,39 +1107,34 @@ func _attraction_mix() -> Dictionary:
 	return mix
 
 func _spawn_hero(cls: String) -> void:
-	var spot := _edge_spot()
-	if spot.x < 0:
-		return
+	# Heroes arrive where their kind belongs: a rogue steps out of the
+	# tavern, a warrior signs on at the guardhouse, a paladin at the
+	# shrine. The attraction roll guarantees the hall exists by now.
+	var hall := _pick_hall(cls)
 	var a = AgentC.new()
-	a.setup(self, "hero", spot)
+	a.setup(self, "hero", hall)
 	a.hero_class = cls
 	a.max_hp = int(HERO_CLASSES[cls].hp)
 	a.hp = a.max_hp
-	a.home = _nearest_complete(HERO_CLASSES[cls].attracted_by, spot)
-	if a.home.x < 0:
-		a.home = keep_pos
+	a.home = hall
 	a.assign(a.home, AgentC.RECRUIT)
 	agents.append(a)
 	heroes_spawned += 1
-	last_event = "A %s arrives, drawn by tales of the realm" % HERO_CLASSES[cls].title
+	last_event = "A %s strides out of the %s" \
+		% [HERO_CLASSES[cls].title, HERO_CLASSES[cls].attracted_by]
 
-func _edge_spot() -> Vector2i:
-	# Heroes wander in from the wild borders, on ground actually connected
-	# to the realm.
-	for i in 20:
-		var p: Vector2i
-		match rng.randi_range(0, 3):
-			0:
-				p = Vector2i(rng.randi_range(1, world.SIZE_X - 2), 1)
-			1:
-				p = Vector2i(rng.randi_range(1, world.SIZE_X - 2), world.SIZE_Y - 2)
-			2:
-				p = Vector2i(1, rng.randi_range(1, world.SIZE_Y - 2))
-			_:
-				p = Vector2i(world.SIZE_X - 2, rng.randi_range(1, world.SIZE_Y - 2))
-		if _open_ground(p) and not find_path(p, keep_pos).is_empty():
-			return p
-	return Vector2i(-1, -1)
+func _pick_hall(cls: String) -> Vector2i:
+	# A random complete hall of the class's attracting kind; the keep is
+	# the fallback of last resort.
+	var kind: String = HERO_CLASSES[cls].attracted_by
+	var pool := []
+	for p in buildings:
+		var b: Dictionary = buildings[p]
+		if b.kind == kind and b.complete:
+			pool.append(p)
+	if pool.is_empty():
+		return keep_pos
+	return pool[rng.randi_range(0, pool.size() - 1)]
 
 func _count_kind(kind: String) -> int:
 	var n := 0
@@ -1081,7 +1191,9 @@ func hero_rest_spot(h) -> Vector2i:
 func hero_goal_scores(h) -> Dictionary:
 	# The heart of indirect control: pure, table-driven incentive scoring.
 	# Personality weights from the content row decide what this hero cares
-	# about; the world decides what is actually available.
+	# about; the world decides what is actually available — and the fog
+	# decides what the hero has heard of. Dens and loot in uncharted land
+	# simply do not exist as options yet.
 	var w: Dictionary = HERO_CLASSES[h.hero_class].weights
 	var scores := {}
 	if h.pouch >= HERO_PURSE_TARGET and _count_complete("market") > 0:
@@ -1089,28 +1201,80 @@ func hero_goal_scores(h) -> Dictionary:
 	if h.fatigue >= HERO_FATIGUE_MAX:
 		scores["rest"] = 12 + h.fatigue
 	if not bounties.is_empty() and int(w.bounty) > 0:
+		# Bounties fly only over dens the player could see, so they are
+		# charted by construction.
 		var best_reward := 0
 		for p in bounties:
 			best_reward = maxi(best_reward, int(bounties[p].reward))
 		# The flag itself counts for a lot (the player asked for it), and a
 		# fatter flag scores higher — stacking bounties really does attract.
 		scores["bounty"] = int(w.bounty) * 2 + int(best_reward / 4.0)
-	if int(w.smite_evil) > 0 and not dens.is_empty():
+	var known_dens := _dens_known_to_realm()
+	if int(w.smite_evil) > 0 and not known_dens.is_empty():
 		var top := 1
-		for p in dens:
+		for p in known_dens:
 			top = maxi(top, int(dens[p].level))
 		scores["smite"] = int(w.smite_evil) + top
-	if int(w.treasure) > 0 and not loot_piles.is_empty():
+	var known_piles := _piles_known_to_realm()
+	if int(w.treasure) > 0 and not known_piles.is_empty():
 		var best_gold := 0
-		for p in loot_piles:
+		for p in known_piles:
 			best_gold = maxi(best_gold, int(loot_piles[p]))
 		# A pile is certain gold; a bounty means a fight first. Risk-adjusted,
 		# free coin on the ground scores a good deal higher.
 		scores["treasure"] = int(w.treasure) * 2 + int(best_gold / 4.0)
 	if int(w.assist) > 0 and _nearest_free_site(h.tile()).x >= 0:
 		scores["assist"] = int(w.assist)
+	# Unknown land beats idle strolling: with no venture on the books, a
+	# hero heads for the frontier about half the time (a coin-flip against
+	# patrolling, broken toward exploring on the tie).
+	if _explore_target(h.tile()).x >= 0:
+		scores["explore"] = 1 + rng.randi_range(0, 1)
 	scores["patrol"] = 1
 	return scores
+
+func _dens_known_to_realm() -> Array:
+	# Dens the realm has actually charted — everything else is rumor.
+	var known := []
+	for p in dens:
+		if explored_at(p):
+			known.append(p)
+	return known
+
+func _piles_known_to_realm() -> Array:
+	var known := []
+	for p in loot_piles:
+		if explored_at(p):
+			known.append(p)
+	return known
+
+func _explore_target(from: Vector2i) -> Vector2i:
+	# Nearest uncharted walkable tile, by walk distance: one flood from the
+	# hero finds the frontier and proves it is reachable.
+	if not fog_enabled:
+		return Vector2i(-1, -1)
+	var prev := {from: from}
+	var queue: Array = [from]
+	var head := 0
+	while head < queue.size():
+		var cur: Vector2i = queue[head]
+		head += 1
+		for d in world.DIRS_ALL:
+			var n: Vector2i = cur + d
+			if not world.in_bounds(n) or prev.has(n):
+				continue
+			if not _open_ground(n):
+				continue
+			# Diagonal moves must not squeeze between two blocked tiles.
+			if d.x != 0 and d.y != 0:
+				if not _open_ground(cur + Vector2i(d.x, 0)) \
+						or not _open_ground(cur + Vector2i(0, d.y)):
+					continue
+			prev[n] = cur
+			if explored[n.y * world.SIZE_X + n.x] == 0:
+				return n
+			queue.append(n)
+	return Vector2i(-1, -1)
 
 func _best_hero_goal(scores: Dictionary) -> String:
 	# Deterministic pick: highest score wins, ties break toward the fixed
@@ -1154,6 +1318,8 @@ func _hero_decide(h) -> void:
 			h.assign(den_doorstep(den, h.tile()), AgentC.ASSAULT)
 		"treasure":
 			h.assign(_nearest_pile(h.tile()), AgentC.TREASURE)
+		"explore":
+			h.assign(_explore_target(h.tile()), AgentC.EXPLORE)
 		"assist":
 			h.assign(_nearest_free_site(h.tile()), AgentC.ASSIST)
 		_:
@@ -1247,8 +1413,10 @@ func _combat_step() -> void:
 			if g.adjacent_to(gob.tile()):
 				attackers += 1
 		for h in heroes:
+			# A hero swings harder than rank alone: level + 1, so a fresh
+			# hero can actually carve through a small warband.
 			if h.adjacent_to(gob.tile()):
-				attackers += h.level
+				attackers += h.level + 1
 		if attackers > 0:
 			# Combat interrupts behavior: the goblin turns to defend itself.
 			gob.fighting = true
