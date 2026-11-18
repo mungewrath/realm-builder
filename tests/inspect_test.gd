@@ -8,6 +8,8 @@ var failed := false
 func _initialize() -> void:
 	_test_building_text()
 	_test_den_text()
+	_test_wild_den_text()
+	_test_creature_titles()
 	_test_purse_tiers()
 	_test_site_status()
 	_test_farm_status()
@@ -23,6 +25,7 @@ func _make_sim(seed_value: int):
 	var WorldC = load("res://scripts/world.gd").new()
 	WorldC.generate(seed_value)
 	var sim = load("res://scripts/kingdom.gd").new()
+	sim.wild_ecology = false # inspector content; ecology has its own suite
 	sim.attach_world(WorldC)
 	sim.set_fog_enabled(false) # inspector content without fog gates
 	sim.keep_trickle = 0 # exact gold accounting; trickle has its own check
@@ -58,6 +61,41 @@ func _test_den_text() -> void:
 		moods[s] = mood
 	if moods.size() != 4:
 		_fail("den mood statuses not distinct")
+
+func _test_wild_den_text() -> void:
+	# Every den kind gets its own title, blurb, and larder-tiered status.
+	var D = load("res://scripts/descriptions.gd")
+	var titles := {}
+	for kind in ["goblin_den", "rabbit_warren", "wolf_den", "spider_den"]:
+		var t: String = D.den_title(kind)
+		if t == "" or D.den_blurb(kind) == "":
+			_fail("missing den text for %s" % kind)
+		titles[t] = kind
+	if titles.size() != 4:
+		_fail("wild den titles not distinct: %s" % titles.keys())
+	var tiers := {}
+	for food in [0, 2, 6]:
+		var s: String = D.den_status({"kind": "rabbit_warren", "food": food})
+		if s == "":
+			_fail("empty wild den status at food %d" % food)
+		tiers[s] = food
+	if tiers.size() != 3:
+		_fail("wild den status tiers not distinct")
+
+func _test_creature_titles() -> void:
+	# Wild creatures are named by species, never "Stranger".
+	var D = load("res://scripts/descriptions.gd")
+	var sim = _make_sim(9)
+	var AgentC = load("res://scripts/agents.gd")
+	for species in ["rabbit", "wolf", "spider"]:
+		var a = AgentC.new()
+		a.species = species
+		a.setup(sim, "creature", sim.keep_pos)
+		var t: String = D.unit_title(a)
+		if t == "Stranger" or t == "":
+			_fail("creature %s shows as %s" % [species, t])
+		if D.agent_activity(a) == "":
+			_fail("creature %s has no idle activity line" % species)
 
 func _test_purse_tiers() -> void:
 	var D = load("res://scripts/descriptions.gd")

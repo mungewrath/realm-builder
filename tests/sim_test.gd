@@ -4,6 +4,7 @@ func _initialize() -> void:
 	var WorldC = load("res://scripts/world.gd").new()
 	WorldC.generate(42)
 	var sim = load("res://scripts/kingdom.gd").new()
+	sim.wild_ecology = false # exact starting-state accounting; ecology tested separately
 	sim.attach_world(WorldC)
 	sim.set_fog_enabled(false) # exact starting-state accounting; fog tested separately
 	sim.raids_enabled = false # exact starting-state accounting; raids tested separately

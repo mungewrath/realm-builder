@@ -76,22 +76,28 @@ const HERO_CLASSES := {
 		"title": "Rogue",
 		"attracted_by": "tavern",
 		"hp": 10,
-		"weights": {"bounty": 4, "treasure": 9, "smite_evil": 1, "assist": 0},
+		"weights": {"bounty": 4, "treasure": 9, "smite_evil": 1, "assist": 0,
+			"hunt": 5, "pray": 0, "carouse": 3},
 	},
 	"warrior": {
 		"title": "Warrior",
 		"attracted_by": "guardhouse",
 		"hp": 14,
-		"weights": {"bounty": 8, "treasure": 4, "smite_evil": 3, "assist": 3},
+		"weights": {"bounty": 8, "treasure": 4, "smite_evil": 3, "assist": 3,
+			"hunt": 3, "pray": 1, "carouse": 2},
 	},
 	"paladin": {
 		"title": "Paladin",
 		"attracted_by": "shrine",
 		"hp": 18,
-		"weights": {"bounty": 3, "treasure": 0, "smite_evil": 9, "assist": 4},
+		"weights": {"bounty": 3, "treasure": 0, "smite_evil": 9, "assist": 4,
+			"hunt": 0, "pray": 6, "carouse": 0},
 	},
 }
-const HERO_GOAL_PRIORITY := ["rest", "shop", "smite", "bounty", "treasure", "explore", "assist", "patrol"]
+# Ventures outrank leisure, leisure outranks idle strolling; ties break
+# toward the earlier entry.
+const HERO_GOAL_PRIORITY := ["rest", "shop", "smite", "bounty", "treasure",
+	"hunt", "pray", "carouse", "explore", "assist", "patrol"]
 
 const HERO_PURSE_TARGET := 10
 const HERO_FATIGUE_MAX := 5
@@ -162,14 +168,93 @@ var guards_fallen := 0
 var intents_seen := {}
 var _removals := []
 
+# M6.1 — ecology. Dens are content rows: where they can squat, what units
+# they raise, and what they eat. Goblins are one row among many; prey dens
+# regrow their larder from the land, predator dens hunt other dens' stores
+# (den-stock predation — no wild unit combat in this chunk). Every wild den
+# tracks unmet needs: a long-empty larder migrates the den or starves it.
+# All knobs are vars so tests and tuning can adjust them.
+const DEN_KINDS := {
+	"goblin_den": {
+		"title": "Goblin Den",
+		"faction": "goblinkin",
+		"hostile": true,
+		"site": "mountain_edge",
+		"spies_as": "A goblin den is spied in the wilds!",
+	},
+	"rabbit_warren": {
+		"title": "Rabbit Warren",
+		"faction": "wilders",
+		"hostile": false,
+		"site": "grass",
+		"role": "prey",
+		"unit": "rabbit",
+		"spies_as": "A warren of rabbits is spied in the meadows!",
+	},
+	"wolf_den": {
+		"title": "Wolf Den",
+		"faction": "wilders",
+		"hostile": false,
+		"site": "forest",
+		"role": "predator",
+		"unit": "wolf",
+		"diet": ["rabbit_warren"],
+		"fallback": "farm", # warrens gone: packs raid farm stores
+		"spies_as": "A wolf den is spied in the deep woods!",
+	},
+	"spider_den": {
+		"title": "Giant Spider Nest",
+		"faction": "wilders",
+		"hostile": false,
+		"site": "forest",
+		"role": "predator",
+		"unit": "spider",
+		"diet": ["goblin_den"],
+		"spies_as": "A giant spider nest is spied in the woods!",
+	},
+}
+
+# Per-species agent stats: pace and constitution (creatures are not
+# combatants in this chunk, but the agent layer wants both).
+const CREATURE_STATS := {
+	"rabbit": {"speed": 2.2, "hp": 1, "carry": 2},
+	"wolf": {"speed": 3.0, "hp": 3, "carry": 3},
+	"spider": {"speed": 2.4, "hp": 3, "carry": 2},
+}
+
+const WILD_DEN_FOOD_START := 5
+const PREY_FOOD_CAP := 8
+
+# Wild ecology: toggle, caps, and pacing. Existing exact-accounting suites
+# run with `wild_ecology` off, same pattern as fog and the gold trickle.
+var wild_ecology := true
+var wild_dens_max := 3
+var wild_spawn_chance := 0.2
+var wild_spawn_weights := {"rabbit_warren": 40, "wolf_den": 35, "spider_den": 25}
+var den_migrate_ticks := 300
+var prey_regrow_ticks := 30
+var wild_den_rest := 400
+var dens_migrated := 0
+var dens_starved := 0
+var wild_dens_spawned := 0
+var wild_respawn_rest_left := 0
+var hunts_made := 0
+
 # M4 — heroes. Attraction pace and hero count are vars so tests and tuning
 # can adjust them. Bounties are the player's one-tap flags on dens; loot
 # piles are what fallen heroes (and cleared dens) leave behind.
 var heroes_enabled := true
-var hero_attraction_ticks := 120
-var _hero_attraction_left := 120
-var hero_arrival_chance := 0.6
+var hero_attraction_ticks := 45 # a roll every ~45s of normal time
+var _hero_attraction_left := 45
+var hero_arrival_chance := 0.75
+# Finishing a hall of any kind pulls the next attraction roll forward to
+# this — the first hero steps out within seconds of the door opening.
+var hero_first_arrival_ticks := 10
 var hero_cap := 4
+# After a hunt or a tavern evening, leisure is off the books for this
+# long — heroes rotate between pastimes and the wilds instead of
+# grinding one warren (or one dice table) until it runs dry.
+var hero_leisure_cooldown := 60
 var heroes_spawned := 0
 var heroes_fallen := 0
 var dens_cleared_by_heroes := 0
@@ -183,9 +268,16 @@ var bounties_paid := 0
 var loot_piles := {} # tile -> gold
 
 # M5 — fog state: one layer. `explored` is the map you have charted, and
-# charted ground stays lit for good.
+# charted ground stays lit for good. Open-ground accounting lets the
+# exploration flood skip the "there is no frontier anywhere" case in O(1)
+# instead of flooding the whole charted map per hero decision.
 var fog_enabled := true
 var explored := PackedByteArray() # 0 unseen, 1 revealed (permanent)
+var open_tiles := PackedByteArray() # 1 for grass/forest tiles
+var open_tile_total := 0
+var open_tiles_explored := 0
+var uncharted_open := {} # open tiles no one has charted yet
+var sealed_frontiers := {} # frontier tiles proven unreachable by pathing
 var tiles_explored := 0
 var landmarks_spotted := 0
 
@@ -199,6 +291,13 @@ func attach_world(w) -> void:
 	keep_pos = Vector2i(int(w.SIZE_X / 2.0), int(w.SIZE_Y / 2.0))
 	buildings[keep_pos] = {"kind": "castle", "complete": true, "tax": 0}
 	explored.resize(w.SIZE_X * w.SIZE_Y)
+	open_tiles.resize(w.SIZE_X * w.SIZE_Y)
+	for i in w.SIZE_X * w.SIZE_Y:
+		var t: int = w.tiles[i]
+		if t == w.GRASS or t == w.FOREST:
+			open_tiles[i] = 1
+			open_tile_total += 1
+			uncharted_open[Vector2i(i % w.SIZE_X, i / w.SIZE_X)] = true
 	if fog_enabled:
 		_stamp_explored(keep_pos, KEEP_REVEAL)
 	else:
@@ -206,6 +305,8 @@ func attach_world(w) -> void:
 	for i in START_POP:
 		_spawn_peasant()
 	_spawn_dens()
+	if wild_ecology:
+		_seed_wild_dens()
 
 func set_fog_enabled(on: bool) -> void:
 	# Dev/tuning toggle. Turning fog back on re-charts from where the realm
@@ -218,6 +319,12 @@ func set_fog_enabled(on: bool) -> void:
 	if on:
 		explored.fill(0)
 		tiles_explored = 0
+		open_tiles_explored = 0
+		uncharted_open.clear()
+		sealed_frontiers.clear()
+		for i in open_tiles.size():
+			if open_tiles[i] == 1:
+				uncharted_open[Vector2i(i % world.SIZE_X, i / world.SIZE_X)] = true
 		landmarks_spotted = 0
 		_fog_tick()
 	else:
@@ -226,6 +333,9 @@ func set_fog_enabled(on: bool) -> void:
 func _reveal_everything() -> void:
 	explored.fill(1)
 	tiles_explored = explored.size()
+	open_tiles_explored = open_tile_total
+	uncharted_open.clear()
+	sealed_frontiers.clear()
 
 func _reveal_radius(a) -> float:
 	return HERO_REVEAL if a.kind == "hero" else WORKER_REVEAL
@@ -245,15 +355,21 @@ func _stamp_explored(p: Vector2i, radius: float) -> void:
 				continue
 			explored[i] = 1
 			tiles_explored += 1
+			if open_tiles[i] == 1:
+				open_tiles_explored += 1
+				uncharted_open.erase(q)
 			if dens.has(q):
 				landmarks_spotted += 1
-				last_event = "A goblin den is spied in the wilds!"
+				var kind_key: String = dens[q].get("kind", "goblin_den")
+				last_event = DEN_KINDS[kind_key].spies_as
 
 func _fog_tick() -> void:
 	if not fog_enabled:
 		return
 	for a in agents:
-		if a.kind == "goblin":
+		# Only the realm's folk chart the map. Goblins and wild creatures
+		# reveal nothing — the wild keeps its secrets.
+		if a.kind == "goblin" or a.kind == "creature":
 			continue
 		var t: Vector2i = a.tile()
 		if t != a.fog_tile:
@@ -271,6 +387,9 @@ func find_path(from: Vector2i, to: Vector2i) -> Array:
 func can_build_at(p: Vector2i) -> bool:
 	if world == null or not world.is_buildable(p) or buildings.has(p):
 		return false
+	# Wild dens are occupied ground: no raising walls over a warren.
+	if dens.has(p):
+		return false
 	# You cannot raise walls on land no one has charted.
 	return explored_at(p)
 
@@ -281,7 +400,7 @@ func build_at(kind: String, p: Vector2i) -> bool:
 	if not can_build_at(p):
 		last_event = "That land is unexplored" \
 			if (world != null and world.in_bounds(p) and not explored_at(p)) \
-			else "Cannot build there"
+			else "Wild beasts den there" if dens.has(p) else "Cannot build there"
 		return false
 	var cost: int = BUILD_COSTS[kind]
 	if gold < cost:
@@ -320,7 +439,18 @@ func complete_building(p: Vector2i) -> void:
 			markets += 1
 		"shrine":
 			shrines += 1
+	# A newly finished hero hall pulls the next attraction roll forward:
+	# heroes show up within seconds of the door opening, not after a stale
+	# cycle has ground its way around.
+	if _is_hero_hall(b.kind) and _count_kind("hero") < hero_cap:
+		_hero_attraction_left = mini(_hero_attraction_left, hero_first_arrival_ticks)
 	last_event = "Finished building " + b.kind
+
+func _is_hero_hall(kind: String) -> bool:
+	for cls in HERO_CLASSES:
+		if HERO_CLASSES[cls].attracted_by == kind:
+			return true
+	return false
 
 func take_tax(p: Vector2i) -> int:
 	var t: int = buildings[p].tax
@@ -339,6 +469,9 @@ func update() -> void:
 	if raids_enabled:
 		_dens_tick()
 		_assign_guards()
+	if wild_ecology:
+		_wild_dens_tick()
+		_wild_creatures_tick()
 	if heroes_enabled:
 		_attraction_tick()
 		_assign_heroes()
@@ -390,8 +523,9 @@ func deliver(a) -> void:
 				food_delivered += a.carrying
 				deliveries += 1
 				a.carrying = 0
-		"goblin":
-			# Foraged roots and stolen plunder both end up in the den's stores.
+		"goblin", "creature":
+			# Foraged roots, grazed browse and hunted prey all end up in the
+			# home den's stores.
 			if a.carrying > 0:
 				var den: Dictionary = dens.get(a.home, {})
 				if not den.is_empty():
@@ -544,6 +678,7 @@ func _spawn_dens() -> void:
 		var idx := rng.randi_range(0, pool.size() - 1)
 		var p: Vector2i = pool.pop_at(idx)
 		dens[p] = {
+			"kind": "goblin_den",
 			"level": 1,
 			"hp": den_hp,
 			"food": 8,
@@ -556,7 +691,9 @@ func _spawn_dens() -> void:
 	den_respawn_rest_left = den_respawn_rest
 
 func _den_respawn_tick() -> void:
-	if dens.size() >= dens_max:
+	# Goblin lairs refill on their own clock; wild dens (ecology) do not
+	# crowd them out of the cap.
+	if _count_hostile_dens() >= dens_max:
 		return
 	if den_respawn_rest_left > 0:
 		den_respawn_rest_left -= 1
@@ -564,6 +701,13 @@ func _den_respawn_tick() -> void:
 	if not _try_spawn_den():
 		# No suitable lair right now: look again after a while.
 		den_respawn_rest_left = 200 + rng.randi_range(0, 200)
+
+func _count_hostile_dens() -> int:
+	var n := 0
+	for p in dens:
+		if is_hostile_den(p):
+			n += 1
+	return n
 
 func _try_spawn_den() -> bool:
 	# The wild regrows lairs from time to time, but shy of civilization:
@@ -607,6 +751,7 @@ func _try_spawn_den() -> bool:
 			pick = c[0]
 			break
 	dens[pick] = {
+		"kind": "goblin_den",
 		"level": 1,
 		"hp": den_hp,
 		"food": 8,
@@ -638,9 +783,12 @@ func den_doorstep(den: Vector2i, from: Vector2i) -> Vector2i:
 
 func _dens_tick() -> void:
 	# The den is the warband orchestrator: it musters goblins over time and
-	# periodically imposes a weighted-random mood on whoever is home.
+	# periodically imposes a weighted-random mood on whoever is home. Wild
+	# dens (ecology) run their own simpler machine in `_wild_dens_tick`.
 	for p in dens:
 		var den: Dictionary = dens[p]
+		if den.get("kind", "goblin_den") != "goblin_den":
+			continue
 		_den_muster(p, den)
 		if den.intent == "muster":
 			# Gathering a warband: hold the home goblins and watch for quorum.
@@ -1057,13 +1205,289 @@ func _patrol_spot(home: Vector2i) -> Vector2i:
 			return p
 	return home
 
+# --- M6.1: ecology — wild dens, creatures, food chains ----------------------
+
+func is_hostile_den(p: Vector2i) -> bool:
+	return dens.has(p) and DEN_KINDS[dens[p].get("kind", "goblin_den")].hostile
+
+func _wild_den_site(kind_key: String, near := Vector2i(-99, -99), near_r := 0,
+		clearance := DEN_CIV_CLEARANCE, min_keep := DEN_WILD_MIN) -> Vector2i:
+	# A suitable squat for a wild den: right terrain, clear of every other
+	# den and building, and (unless migrating toward prey) far from the keep.
+	var terrain_want: int = world.GRASS if DEN_KINDS[kind_key].site == "grass" \
+		else world.FOREST
+	var best := Vector2i(-1, -1)
+	var pool := []
+	for y in world.SIZE_Y:
+		for x in world.SIZE_X:
+			var p := Vector2i(x, y)
+			if world.get_terrain(p) != terrain_want or dens.has(p) or buildings.has(p):
+				continue
+			if near_r <= 0:
+				if Vector2(p).distance_to(Vector2(keep_pos)) < min_keep:
+					continue
+			elif Vector2(p).distance_to(Vector2(near)) > near_r:
+				continue
+			var near_civ := false
+			for b in buildings:
+				if Vector2(b).distance_to(Vector2(p)) < clearance:
+					near_civ = true
+					break
+			if near_civ:
+				continue
+			pool.append(p)
+	if pool.is_empty():
+		return best
+	return pool[rng.randi_range(0, pool.size() - 1)]
+
+func _seed_wild_dens() -> void:
+	# The starting wilds hold prey and a predator: a warren to graze and a
+	# wolf pack to stalk it. Spiders arrive only with the regrowth. Some
+	# worlds have no deep forest; the seed falls back to shallower ground
+	# rather than leaving the wilds empty.
+	var warren := _wild_den_site("rabbit_warren")
+	if warren.x < 0:
+		warren = _wild_den_site("rabbit_warren", Vector2i(-99, -99), 0, 4, 8)
+	if warren.x >= 0:
+		_place_wild_den("rabbit_warren", warren)
+	var woods := _wild_den_site("wolf_den")
+	if woods.x < 0:
+		woods = _wild_den_site("wolf_den", Vector2i(-99, -99), 0, 4, 8)
+	if woods.x >= 0:
+		_place_wild_den("wolf_den", woods)
+	wild_respawn_rest_left = wild_den_rest + rng.randi_range(0, 300)
+
+func _place_wild_den(kind_key: String, p: Vector2i, food := WILD_DEN_FOOD_START) -> void:
+	dens[p] = {
+		"kind": kind_key,
+		"level": 1,
+		"hp": den_hp,
+		"food": food,
+		"gold": 0,
+		"unmet": 0,
+		"regrow": 0,
+	}
+	var unit: String = DEN_KINDS[kind_key].unit
+	for i in (2 if unit != "spider" else 1):
+		_spawn_creature(unit, p)
+	if not fog_enabled or not explored[p.y * world.SIZE_X + p.x]:
+		return
+	# Charted ground at placement time: count it as spotted land only.
+	if DEN_KINDS[kind_key].spies_as != "":
+		last_event = DEN_KINDS[kind_key].spies_as
+
+func _wild_respawn_tick() -> void:
+	if _count_wild_dens() >= wild_dens_max:
+		return
+	if wild_respawn_rest_left > 0:
+		wild_respawn_rest_left -= 1
+		return
+	if not _try_spawn_wild_den():
+		wild_respawn_rest_left = 200 + rng.randi_range(0, 200)
+
+func _count_wild_dens() -> int:
+	var n := 0
+	for p in dens:
+		if dens[p].get("kind", "goblin_den") != "goblin_den":
+			n += 1
+	return n
+
+func _try_spawn_wild_den() -> bool:
+	if rng.randf() > wild_spawn_chance:
+		return false
+	var kind_key := _weighted_intent(wild_spawn_weights)
+	var p := _wild_den_site(kind_key)
+	if p.x < 0:
+		return false
+	_place_wild_den(kind_key, p)
+	wild_dens_spawned += 1
+	wild_respawn_rest_left = wild_den_rest + rng.randi_range(0, 300)
+	return true
+
+func _wild_dens_tick() -> void:
+	# Wild den upkeep: prey larders regrow from the land; every den counts
+	# unmet needs while empty and, past the threshold, moves on or dies off.
+	for p in dens.keys():
+		var den: Dictionary = dens[p]
+		var kind_key: String = den.get("kind", "goblin_den")
+		if kind_key == "goblin_den":
+			continue # goblins raid instead of migrating; hunger drives them
+		if DEN_KINDS[kind_key].role == "prey":
+			den.regrow = int(den.regrow) + 1
+			if int(den.regrow) >= prey_regrow_ticks:
+				den.regrow = 0
+				den.food = mini(int(den.food) + 1, PREY_FOOD_CAP)
+		if int(den.food) > 0:
+			den.unmet = 0
+			continue
+		den.unmet = int(den.unmet) + 1
+		if int(den.unmet) >= den_migrate_ticks:
+			var dest := _migration_site(p, den)
+			if dest.x < 0:
+				_starve_den(p, den)
+			else:
+				_migrate_den(p, den, dest)
+	_wild_respawn_tick()
+
+func _migration_site(p: Vector2i, den: Dictionary) -> Vector2i:
+	# Where a starving den moves: predators follow their prey (a warren of
+	# rabbits, say); wolves with no warrens left stalk toward the farm
+	# stores, or else roam the far wilds and raid from there; prey dens
+	# seek fresh meadows. Spiders with no goblin dens to snare have
+	# nowhere to go — they starve.
+	var kind_key: String = den.get("kind", "goblin_den")
+	var row: Dictionary = DEN_KINDS[kind_key]
+	if row.role == "predator":
+		var prey := _nearest_prey_den(p, row.diet)
+		if prey.x >= 0:
+			return _wild_den_site(kind_key, prey, 6)
+		if row.has("fallback"):
+			var farm := _nearest_complete(row.fallback, p)
+			if farm.x >= 0:
+				var near_farm := _wild_den_site(kind_key, farm, 7, 2)
+				if near_farm.x >= 0:
+					return near_farm
+			return _wild_den_site(kind_key)
+		return Vector2i(-1, -1)
+	return _wild_den_site(kind_key)
+
+func _migrate_den(p: Vector2i, den: Dictionary, dest: Vector2i) -> void:
+	dens.erase(p)
+	dens[dest] = den
+	den.unmet = 0
+	for a in agents:
+		if a.kind == "creature" and a.home == p:
+			a.home = dest
+	dens_migrated += 1
+	last_event = "The %s moved on to richer grounds" % DEN_KINDS[den.kind].title
+
+func _starve_den(p: Vector2i, den: Dictionary) -> void:
+	dens.erase(p)
+	dens_starved += 1
+	for a in agents:
+		if a.kind == "creature" and a.home == p and not _removals.has(a):
+			_removals.append(a)
+	last_event = "The %s has starved out of the wilds" % DEN_KINDS[den.kind].title
+
+func _nearest_prey_den(from: Vector2i, diet: Array) -> Vector2i:
+	var best := Vector2i(-1, -1)
+	var best_d := INF
+	for p in dens:
+		if not diet.has(dens[p].get("kind", "")):
+			continue
+		if int(dens[p].food) <= 0:
+			continue
+		var d := Vector2(p).distance_squared_to(Vector2(from))
+		if d < best_d:
+			best_d = d
+			best = p
+	return best
+
+func _hunter_out(den_pos: Vector2i) -> bool:
+	for a in agents:
+		if a.kind == "creature" and a.home == den_pos \
+				and a.purpose == AgentC.HUNT:
+			return true
+	return false
+
+func _hunt_target(a) -> Vector2i:
+	var den: Dictionary = dens.get(a.home, {})
+	var row: Dictionary = DEN_KINDS[den.get("kind", "goblin_den")]
+	var prey := _nearest_prey_den(a.home, row.diet)
+	if prey.x >= 0:
+		return prey
+	if row.has("fallback"):
+		var farm := _nearest_complete(row.fallback, a.tile())
+		if farm.x >= 0:
+			return farm
+	return Vector2i(-1, -1)
+
+func hunt_strike(p: Vector2i, hunter) -> void:
+	# The predator takes what it can from its prey's larder — or, when the
+	# wild prey is gone, strips a farm's stores (no torch, no raze: the
+	# wolves want meat, not ashes).
+	var taken := 0
+	if dens.has(p):
+		taken = mini(CREATURE_STATS[hunter.species].carry, int(dens[p].food))
+		dens[p].food = int(dens[p].food) - taken
+	elif buildings.has(p) and buildings[p].complete:
+		taken = FARM_PLUNDER
+		last_event = "Wolves strip a farm's stores in the night!"
+	hunts_made += 1
+	hunter.carrying = taken
+	hunter.loot_kind = "food"
+
+func _wild_creatures_tick() -> void:
+	for a in agents:
+		if a.kind != "creature":
+			continue
+		if a.state != AgentC.IDLE:
+			continue
+		if a.behavior_left > 0:
+			a.behavior_left -= 1
+			continue
+		_roll_creature_behavior(a)
+
+func _roll_creature_behavior(a) -> void:
+	var den: Dictionary = dens.get(a.home, {})
+	if a.species == "rabbit":
+		var roll := _weighted_intent({"graze": 60, "wander": 25, "lurk": 15})
+		match roll:
+			"graze":
+				a.assign(_graze_spot(a.home), AgentC.FORAGE)
+				a.behavior_left = 40
+			"wander":
+				a.assign(_wilds_spot(a.home, 5, a.tile()), AgentC.WANDER)
+				a.behavior_left = 15 + rng.randi_range(0, 15)
+			_:
+				a.behavior = "lurk"
+				a.behavior_left = 10 + rng.randi_range(0, 20)
+		return
+	# Predators: hunt when the larder runs low and no packmate is already
+	# out; otherwise prowl lazily around the den. No grazing — meat does
+	# not grow on bushes; a predator's larder only grows by hunting.
+	if int(den.get("food", 0)) <= DEN_HUNGRY_FOOD and not _hunter_out(a.home):
+		var prey := _hunt_target(a)
+		if prey.x >= 0:
+			a.assign(prey, AgentC.HUNT)
+			a.behavior_left = 80
+			return
+	var roll := _weighted_intent({"lurk": 60, "wander": 40})
+	if roll == "lurk":
+		a.behavior = "lurk"
+		a.behavior_left = 20 + rng.randi_range(0, 30)
+	else:
+		a.assign(_wilds_spot(a.home, 6, a.tile()), AgentC.WANDER)
+		a.behavior_left = 20 + rng.randi_range(0, 20)
+
+func _graze_spot(den_pos: Vector2i) -> Vector2i:
+	# Meadow browse: prefer open grass near the den, settle for any open
+	# ground around it.
+	var pool := []
+	for dy in range(-8, 9):
+		for dx in range(-8, 9):
+			var p: Vector2i = den_pos + Vector2i(dx, dy)
+			if _open_ground(p) and world.get_terrain(p) == world.GRASS:
+				pool.append(p)
+	if not pool.is_empty():
+		return pool[rng.randi_range(0, pool.size() - 1)]
+	return _wilds_spot(den_pos, 6, den_pos)
+
+func _spawn_creature(species_name: String, den_pos: Vector2i) -> void:
+	var a = AgentC.new()
+	a.species = species_name
+	a.setup(self, "creature", den_pos)
+	a.home = den_pos
+	agents.append(a)
+
 # --- M4: heroes & attraction ------------------------------------------------
 
 func post_bounty(den_pos: Vector2i) -> bool:
 	# The player's one-tap nudge: a flag with gold on it. Heroes weigh it
-	# against everything else and decide for themselves.
-	if not dens.has(den_pos):
-		last_event = "No den there to bounty"
+	# against everything else and decide for themselves. Only hostile dens
+	# are bounty-able — wild beasts are not a den of evil.
+	if not is_hostile_den(den_pos):
+		last_event = "That lair is no den of evil"
 		return false
 	if gold < BOUNTY_FEE:
 		last_event = "Not enough gold for the bounty"
@@ -1152,9 +1576,12 @@ func _count_complete(kind: String) -> int:
 	return n
 
 func _nearest_den(from: Vector2i) -> Vector2i:
+	# Smite targets are dens of evil, not rabbit burrows.
 	var best := Vector2i(-1, -1)
 	var best_d := INF
 	for p in dens:
+		if not is_hostile_den(p):
+			continue
 		var d := Vector2(p).distance_squared_to(Vector2(from))
 		if d < best_d:
 			best_d = d
@@ -1206,9 +1633,10 @@ func hero_goal_scores(h) -> Dictionary:
 		var best_reward := 0
 		for p in bounties:
 			best_reward = maxi(best_reward, int(bounties[p].reward))
-		# The flag itself counts for a lot (the player asked for it), and a
-		# fatter flag scores higher — stacking bounties really does attract.
-		scores["bounty"] = int(w.bounty) * 2 + int(best_reward / 4.0)
+		# The flag's size does the pulling — a pittance tempts, a fortune
+		# drags even the reluctant out the door — while personality only
+		# tints how tempting flags are at all.
+		scores["bounty"] = int(w.bounty) + int(best_reward / 4.0)
 	var known_dens := _dens_known_to_realm()
 	if int(w.smite_evil) > 0 and not known_dens.is_empty():
 		var top := 1
@@ -1223,6 +1651,33 @@ func hero_goal_scores(h) -> Dictionary:
 		# A pile is certain gold; a bounty means a fight first. Risk-adjusted,
 		# free coin on the ground scores a good deal higher.
 		scores["treasure"] = int(w.treasure) * 2 + int(best_gold / 4.0)
+	# Leisure: hunting warrens, prayer, tavern evenings — the idle hours
+	# that keep heroes from marching like clockwork. Each only exists when
+	# the realm actually offers it, ventures always outrank them, and the
+	# chase itself is for fresh legs: a hero grows tired of hunting long
+	# before the warren runs dry, leaving the game to the wolves. A recent
+	# round of leisure dulls the appetite (halved score, so quarter weight
+	# in the draw) but never locks the door — rotation comes from the
+	# odds, not from gates.
+	var known_warrens := _warrens_known_to_realm()
+	var leisure_damp := 2 if h.leisure_left > 0 else 1
+	if int(w.get("hunt", 0)) > 0 and not known_warrens.is_empty() \
+			and h.fatigue <= 2:
+		var best_game := 0
+		for p in known_warrens:
+			best_game = maxi(best_game, int(dens[p].food))
+		scores["hunt"] = (int(w.hunt) + int(best_game / 4.0)) / leisure_damp
+	if int(w.get("pray", 0)) > 0 and _count_complete("shrine") > 0 \
+			and h.fatigue >= 2:
+		# Prayer is for the weary: a fresh paladin has evil to smite.
+		scores["pray"] = int(w.pray) * 2
+	if int(w.get("carouse", 0)) > 0 and taverns > 0 \
+			and h.fatigue < HERO_FATIGUE_MAX:
+		# Ale and dice scale with the purse: a hero with plunder to burn
+		# leans hard toward the tavern; a broke one mostly stays home.
+		# (The market still outranks it while the purse is worth banking.)
+		scores["carouse"] = (int(w.carouse) + rng.randi_range(0, 1)
+			+ mini(int(h.pouch), 40) / 4) / leisure_damp
 	if int(w.assist) > 0 and _nearest_free_site(h.tile()).x >= 0:
 		scores["assist"] = int(w.assist)
 	# Unknown land beats idle strolling: with no venture on the books, a
@@ -1234,12 +1689,32 @@ func hero_goal_scores(h) -> Dictionary:
 	return scores
 
 func _dens_known_to_realm() -> Array:
-	# Dens the realm has actually charted — everything else is rumor.
+	# Hostile dens the realm has actually charted — everything else is
+	# rumor, and wild beasts are no smiting matter anyway.
 	var known := []
 	for p in dens:
-		if explored_at(p):
+		if is_hostile_den(p) and explored_at(p):
 			known.append(p)
 	return known
+
+func _warrens_known_to_realm() -> Array:
+	# Hunt grounds: charted warrens that still hold game.
+	var known := []
+	for p in dens:
+		if dens[p].get("kind", "") == "rabbit_warren" \
+				and int(dens[p].food) > 0 and explored_at(p):
+			known.append(p)
+	return known
+
+func _nearest_known_warren(from: Vector2i) -> Vector2i:
+	var best := Vector2i(-1, -1)
+	var best_d := INF
+	for p in _warrens_known_to_realm():
+		var d := Vector2(p).distance_squared_to(Vector2(from))
+		if d < best_d:
+			best_d = d
+			best = p
+	return best
 
 func _piles_known_to_realm() -> Array:
 	var known := []
@@ -1249,10 +1724,32 @@ func _piles_known_to_realm() -> Array:
 	return known
 
 func _explore_target(from: Vector2i) -> Vector2i:
-	# Nearest uncharted walkable tile, by walk distance: one flood from the
-	# hero finds the frontier and proves it is reachable.
+	# Nearest uncharted walkable tile the hero can actually reach. The
+	# candidate set is the live list of uncharted open tiles, so probing is
+	# a path search with early exit — and a sealed pocket (uncharted land
+	# nothing can walk into) is memoized once instead of being re-flooded
+	# by every hero decision.
 	if not fog_enabled:
 		return Vector2i(-1, -1)
+	if uncharted_open.is_empty():
+		return Vector2i(-1, -1)
+	while true:
+		var best := Vector2i(-1, -1)
+		var best_d := INF
+		for c in uncharted_open:
+			if sealed_frontiers.has(c):
+				continue
+			var d := Vector2(c).distance_squared_to(Vector2(from))
+			if d < best_d:
+				best_d = d
+				best = c
+		if best.x < 0:
+			return Vector2i(-1, -1)
+		if not find_path(from, best).is_empty():
+			return best
+		# Unreachable ground: sealed off by mountains or water. Every hero
+		# would reach the same verdict, so remember it.
+		sealed_frontiers[best] = true
 	var prev := {from: from}
 	var queue: Array = [from]
 	var head := 0
@@ -1278,7 +1775,8 @@ func _explore_target(from: Vector2i) -> Vector2i:
 
 func _best_hero_goal(scores: Dictionary) -> String:
 	# Deterministic pick: highest score wins, ties break toward the fixed
-	# priority order.
+	# priority order. Used by tests (and any UI that wants to show a
+	# hero's favored pursuit); live decisions draw by weight instead.
 	var best := "patrol"
 	var best_v := -1
 	for g in HERO_GOAL_PRIORITY:
@@ -1287,11 +1785,36 @@ func _best_hero_goal(scores: Dictionary) -> String:
 			best = g
 	return best
 
+func _pick_hero_goal(h, scores: Dictionary) -> String:
+	# Overriding priorities come first: safety. An exhausted hero turns
+	# in, whatever the dice say. Self-defense needs no goal at all —
+	# heroes reflexively fight anything hostile in reach, outside this
+	# choice. Everything else is a weighted draw over what the realm
+	# offers: favored pursuits are usually taken, but every action on
+	# the table keeps a chance — heroes have moods, not gears. Scores
+	# square into weights so a fat bounty or a full purse really pulls,
+	# while idle options still surface now and then.
+	if scores.has("rest") and h.fatigue >= HERO_FATIGUE_MAX:
+		return "rest"
+	var total := 0
+	for g in scores:
+		total += int(scores[g]) * int(scores[g])
+	if total <= 0:
+		return "patrol"
+	var roll := rng.randi_range(1, total)
+	for g in scores:
+		roll -= int(scores[g]) * int(scores[g])
+		if roll <= 0:
+			return g
+	return "patrol"
+
 func _assign_heroes() -> void:
 	for a in agents:
 		if a.kind != "hero":
 			continue
 		_hero_level_check(a)
+		if a.leisure_left > 0:
+			a.leisure_left -= 1
 		if a.state != AgentC.IDLE or a.fighting:
 			continue
 		if a.decision_left > 0:
@@ -1300,7 +1823,7 @@ func _assign_heroes() -> void:
 		_hero_decide(a)
 
 func _hero_decide(h) -> void:
-	var goal := _best_hero_goal(hero_goal_scores(h))
+	var goal := _pick_hero_goal(h, hero_goal_scores(h))
 	h.goal = goal
 	h.decision_left = 2 + rng.randi_range(0, 4)
 	match goal:
@@ -1318,6 +1841,12 @@ func _hero_decide(h) -> void:
 			h.assign(den_doorstep(den, h.tile()), AgentC.ASSAULT)
 		"treasure":
 			h.assign(_nearest_pile(h.tile()), AgentC.TREASURE)
+		"hunt":
+			h.assign(_nearest_known_warren(h.tile()), AgentC.HUNT)
+		"pray":
+			h.assign(_nearest_complete("shrine", h.tile()), AgentC.PRAY)
+		"carouse":
+			h.assign(_nearest_complete("tavern", h.tile()), AgentC.CAROUSE)
 		"explore":
 			h.assign(_explore_target(h.tile()), AgentC.EXPLORE)
 		"assist":
@@ -1350,6 +1879,34 @@ func hero_shop(h) -> void:
 func hero_rest(h) -> void:
 	h.fatigue = 0
 	h.hp = h.max_hp
+
+func hero_pray(h) -> void:
+	# Candlelight and quiet: prayer eases a weary hero, and mends a
+	# little of what the wilds took.
+	h.fatigue = maxi(0, h.fatigue - 2)
+	h.hp = mini(h.hp + 1, h.max_hp)
+
+func hero_carouse(h) -> void:
+	# An evening of ale and dice: cheaper than rest, dearer than pride.
+	# The coin spent ends up in the tavern's till for the collector.
+	h.fatigue = maxi(0, h.fatigue - 1)
+	h.hp = mini(h.hp + 1, h.max_hp)
+	h.leisure_left = hero_leisure_cooldown
+	var b: Dictionary = buildings.get(h.target, {})
+	if b.get("kind", "") == "tavern":
+		var row: Dictionary = BUILD_TAX["tavern"]
+		b.tax = mini(int(b.tax) + 1, int(row.cap))
+
+func hero_hunt(h) -> void:
+	# A spot of hunting: the warren's larder loses a hare or two, and the
+	# hunter comes back a touch more seasoned. Thin the warrens too hard
+	# and the wolves start eyeing the farms — the ecology keeps score.
+	var den: Dictionary = dens.get(h.target, {})
+	if not den.is_empty() and DEN_KINDS[den.get("kind", "")].role == "prey":
+		den.food = maxi(0, int(den.food) - 2)
+		_hero_gain_xp(h, 1)
+	h.fatigue += 1
+	h.leisure_left = hero_leisure_cooldown
 
 func hero_take_loot(h) -> void:
 	if loot_piles.has(h.target):
@@ -1445,6 +2002,8 @@ func _combat_step() -> void:
 			h.hurt(enemies)
 	for p in dens.duplicate():
 		var den: Dictionary = dens[p]
+		if not is_hostile_den(p):
+			continue # wild lairs are nobody's siege target
 		var besiegers := 0
 		for g in guards:
 			if g.adjacent_to(p):

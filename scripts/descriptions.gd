@@ -26,8 +26,26 @@ const BUILDING_BLURBS := {
 const LOOT_TITLE := "Dropped Loot"
 const LOOT_BLURB := "A purse left where someone fell. Quick hands and greedy hearts both know what to do with it."
 
-const DEN_TITLE := "Goblin Den"
-const DEN_BLURB := "A ragged cave mouth in the mountainside. Warbands creep out of it to burn and plunder — but it can be stormed and cleared."
+# M6.1: dens are content rows now — one title/blurb per kind. Goblin dens
+# stay the realm's enemy; wild lairs are the land's own folk.
+const DEN_INFO := {
+	"goblin_den": {
+		"title": "Goblin Den",
+		"blurb": "A ragged cave mouth in the mountainside. Warbands creep out of it to burn and plunder — but it can be stormed and cleared.",
+	},
+	"rabbit_warren": {
+		"title": "Rabbit Warren",
+		"blurb": "A sandy mound of burrows. The rabbits graze the meadows and multiply — and everything hungry in the wilds knows it.",
+	},
+	"wolf_den": {
+		"title": "Wolf Den",
+		"blurb": "A dark hollow under the roots. The pack hunts where the rabbits are — and if the warrens ever run dry, the farms will do.",
+	},
+	"spider_den": {
+		"title": "Giant Spider Nest",
+		"blurb": "A cave mouth veiled in web. The great spider snares goblins for supper; some folk quietly cheer for it.",
+	},
+}
 
 const HERO_TITLES := {
 	"rogue": "Rogue",
@@ -46,6 +64,9 @@ const UNIT_ROLES := {
 	"collector": "Tax Collector",
 	"guard": "Guard",
 	"goblin": "Goblin",
+	"rabbit": "Rabbit",
+	"wolf": "Grey Wolf",
+	"spider": "Giant Spider",
 }
 
 static func building_title(kind: String) -> String:
@@ -54,11 +75,11 @@ static func building_title(kind: String) -> String:
 static func building_blurb(kind: String) -> String:
 	return BUILDING_BLURBS.get(kind, "")
 
-static func den_title() -> String:
-	return DEN_TITLE
+static func den_title(kind: String = "goblin_den") -> String:
+	return DEN_INFO.get(kind, DEN_INFO["goblin_den"]).title
 
-static func den_blurb() -> String:
-	return DEN_BLURB
+static func den_blurb(kind: String = "goblin_den") -> String:
+	return DEN_INFO.get(kind, DEN_INFO["goblin_den"]).blurb
 
 static func loot_title() -> String:
 	return LOOT_TITLE
@@ -78,9 +99,22 @@ static func hero_blurb(a) -> String:
 static func unit_title(a) -> String:
 	if a.kind == "hero":
 		return hero_title(a)
-	return UNIT_ROLES.get(a.kind, "Stranger")
+	# Wild creatures are named by species, not by their agent kind.
+	var role: String = a.species if a.kind == "creature" else a.kind
+	return UNIT_ROLES.get(role, "Stranger")
 
 static func den_status(den: Dictionary, p: Vector2i = Vector2i(-1, -1), sim = null) -> String:
+	# Wild lairs speak of their larder; goblin dens of their next move.
+	var kind: String = den.get("kind", "goblin_den")
+	if kind != "goblin_den":
+		var s := ""
+		if int(den.get("food", 0)) <= 0:
+			s = "The larder is empty; the den grows desperate."
+		elif int(den.get("food", 0)) < 3:
+			s = "Lean pickings of late; hungry eyes scan the horizon."
+		else:
+			s = "The den is well fed and the wilds are quiet."
+		return s
 	# The den's current mood colors what a visitor would see.
 	var s := ""
 	match den.get("intent", ""):
@@ -184,6 +218,55 @@ static func _guardhouse_status(p: Vector2i, sim) -> String:
 		return "The watch is out driving off raiders."
 	return "Guards drill in the yard, spears ready."
 
+static func _creature_activity(a) -> String:
+	# The wilds' folk: what a beast of this species is up to.
+	if a.carrying > 0:
+		match a.species:
+			"rabbit":
+				return "hauling browse back to the warren"
+			"wolf":
+				return "hauling the kill back to the den"
+			_:
+				return "dragging supper back to the nest"
+	match a.state:
+		"idle":
+			if a.adjacent_to(a.home):
+				match a.species:
+					"rabbit":
+						return "dozing at the warren"
+					"wolf":
+						return "curled up at the den"
+					_:
+						return "coiled in the nest"
+			match a.behavior:
+				"wander":
+					return "rambling through the wilds"
+				_:
+					return "loitering in the wilds"
+		"to_target":
+			match a.purpose:
+				"forage":
+					match a.species:
+						"rabbit":
+							return "hopping out to graze"
+						_:
+							return "rooting about for food"
+				"hunt":
+					return "stalking its prey"
+				_:
+					return "rambling through the wilds"
+		"acting":
+			match a.purpose:
+				"forage":
+					return "grazing"
+				"hunt":
+					return "at the prey's doorstep"
+				_:
+					return "about its business"
+		"returning":
+			return "padding back to the den"
+	return "about its business"
+
 static func agent_line(a) -> String:
 	var role: String = unit_title(a)
 	return "%s — %s" % [role, agent_activity(a)]
@@ -215,6 +298,8 @@ static func agent_activity(a) -> String:
 			_:
 				return "running from danger!"
 	match a.kind:
+		"creature":
+			return _creature_activity(a)
 		"hero":
 			if a.fighting:
 				return "fighting for their life!"
@@ -239,6 +324,12 @@ static func agent_activity(a) -> String:
 							return "off to lend a hand"
 						"explore":
 							return "venturing into the unknown"
+						"hunt":
+							return "off after game in the wilds"
+						"pray":
+							return "walking to the shrine"
+						"carouse":
+							return "heading for the tavern"
 						_:
 							return "strolling the realm"
 				"acting":
@@ -253,6 +344,12 @@ static func agent_activity(a) -> String:
 							return "hammering alongside the builders"
 						"assault":
 							return "storming the goblin den"
+						"pray":
+							return "kneeling in quiet prayer"
+						"carouse":
+							return "drinking and dicing the night away"
+						"hunt":
+							return "hunting game in the brush"
 						_:
 							return "about their business"
 		"collector":

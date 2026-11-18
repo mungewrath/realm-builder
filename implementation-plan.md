@@ -250,15 +250,90 @@ Rogues were dying near-instantly when a warband mobbed them.
 Done when: a fresh hero survives the kind of ambush that used to delete
 rogues, and hero deaths feel like drama, not like losing a villager.
 
+## M5.8 — Hero arrival pacing (player feedback)
+
+Heroes took minutes to show: a 120-tick attraction cycle at 60% whose
+countdown ran from world attach, so a hall built late could wait out a
+stale cycle on top of the wait.
+
+- Attraction rolls now come every ~45s (75% chance).
+- Finishing any hero hall pulls the next roll forward to ~10 ticks —
+  the first hero steps out within seconds of the door opening; later
+  arrivals keep the steady 45s cadence.
+- Perf fix (surfaced by the faster arrivals): heroes charting the whole
+  map made every idle decision flood it hunting for a frontier that no
+  longer existed, ~10.8 ms/tick. Exploration now probes the live set of
+  uncharted open tiles with the early-exit pathfinder, and sealed pockets
+  (unreachable uncharted land) are memoized once: ~1.0 ms/tick.
+- Test: first arrival within 12 ticks of the tavern's finish.
+
 ## M6 — Ecology & factions 2-3
 
-- Dens get `needs` (terrain/food); unmet needs → migration or starvation.
-- Food chains from `content-design.md` (frogs→owlbears, rabbits→wolves…).
-- Kobold–gnome feud events; bandits ambush caravans; hags curse farms.
-- Terrain actions (drain swamp, clear forest) with ripple consequences;
-  druid reaction.
-- Tests: chain reactions (drain swamp → frog collapse → owlbear claim shift),
-  tension matrix drift, den migration.
+Ground shape: the den system becomes a real ecology before new factions
+stack on top of it. Split into staged chunks, each testable headless.
+
+## M6.1 — Ecology core: dens, creatures, food chains (built, awaiting playtest)
+
+- Dens are content rows (`DEN_KINDS` in `kingdom.gd`: faction, site
+  terrain, unit, diet); goblins become one row among many, and every den
+  dict carries a `kind`.
+- Wild dens behind a `wild_ecology` toggle (exact-accounting suites run
+  with it off, same pattern as fog): rabbit warrens graze the meadows and
+  regrow their larder; wolf packs hunt warrens for food; giant spiders
+  raid goblin dens' stores — the first two chains from
+  `content-design.md` (rabbits → wolves, goblins → spiders).
+- Every wild den has `needs` (its food): a larder empty for
+  `den_migrate_ticks` migrates the den toward better grounds — predators
+  follow prey, and wolves with no warrens left fall back to raiding
+  farm stores; with nowhere to go, the den starves out (dissolves, no
+  loot, its creatures die off). Goblin dens raid instead of migrating —
+  hunger is their pressure valve.
+- Wild regrowth now seeds from a weighted table (goblins still dominant):
+  warrens on grass, wolf/spider dens in deep forest, always far from the
+  keep and clear of buildings; wild dens cap separately from goblin ones.
+- Wild creatures are agents with per-species behavior rolls (graze /
+  lurk / wander / hunt). They never fight the realm in this chunk —
+  wilder territoriality lands later.
+- Realm gating: heroes smite and bounties only target *hostile* dens;
+  you cannot build on a wild den tile; fog discovery events, inspector
+  text, map view and minimap are kind-aware.
+- Hero leisure (tuned after playtesting): hunting (rogues love it,
+  fresh legs only — it yields to bounties and peters out before the
+  warren runs dry), prayer at the shrine (weary paladins), and tavern
+  evenings that drop a coin in the till.
+- Decisions are a weighted draw, not a locked ranking: overriding
+  priorities are safety (an exhausted hero always turns in) and
+  self-defense (reflexive fighting sits outside goal choice);
+  everything else squares its incentive score into a weight and rolls,
+  so favored pursuits usually win but anything on the table keeps a
+  chance. Pull scales with the stakes: a bounty's reward does the
+  tugging (an 18g flag tempts a rogue ~65% of draws, a 5000g one takes
+  everyone), and a carousing hero leans on the tavern in proportion to
+  the purse (a broke rogue drinks ~30% of draws, a 30g one ~80% — the
+  market still outranks it while the purse is worth banking). A round
+  of hunt or carouse halves its own score for ~60 ticks (quarter
+  weight) — rotation comes from the odds, not gates.
+  `_best_hero_goal` remains the deterministic "favored pursuit" query
+  for tests/UI.
+- Tests: `tests/ecology_test.gd` (seeded lairs, prey regrowth, hunt
+  chain accounting, spider-vs-goblin chain, migration vs starvation,
+  farm fallback, gating, long-run sim + tick budget).
+- Deferred to the next chunks: faction tension matrix (lands with the
+  factions that act on it).
+
+## M6.2 — Factions 2-3: kobolds, gnomes, bandits, hags
+
+- Kobold–gnome feud events; bandits ambush caravans and rob heroes;
+  hags curse farms. Faction tension matrix from `content-design.md` with
+  event shifts and drift toward 0.
+
+## M6.3 — Terrain actions & druid reaction
+
+- Drain swamp, clear forest with ripple consequences; the frog→owlbear
+  chain needs swamp terrain, so it lands here; druid
+  protect-wilderness reaction (druid hero class arrives).
+- Tests: chain reactions (drain swamp → frog collapse → owlbear claim
+  shift), tension matrix drift, den migration.
 
 ## M7 — Content & diplomacy pass
 

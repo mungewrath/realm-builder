@@ -16,6 +16,8 @@ func _initialize() -> void:
 	_test_bounty_flow()
 	_test_death_drops_loot()
 	_test_loot_pickup()
+	_test_leisure_goals()
+	_test_fast_first_arrival()
 	_test_long_run()
 	print("RESULT: %s" % ["PASS" if not failed else "FAIL"])
 	quit(1 if failed else 0)
@@ -28,6 +30,7 @@ func _make_sim(seed_value: int):
 	var WorldC = load("res://scripts/world.gd").new()
 	WorldC.generate(seed_value)
 	var sim = load("res://scripts/kingdom.gd").new()
+	sim.wild_ecology = false # hero accounting; ecology has its own suite
 	sim.attach_world(WorldC)
 	sim.set_fog_enabled(false) # hero accounting without fog gates
 	sim.keep_trickle = 0 # exact gold accounting; trickle has its own check
@@ -39,6 +42,15 @@ func _count(sim, kind: String) -> int:
 		if a.kind == kind:
 			n += 1
 	return n
+
+func _decide_until(sim, h, purpose: String, tries: int) -> bool:
+	# Live decisions are a weighted draw, so one roll can miss the
+	# favorite; give a favored pursuit a fair sample before declaring.
+	for i in tries:
+		sim._hero_decide(h)
+		if h.purpose == purpose:
+			return true
+	return false
 
 func _heroes(sim) -> Array:
 	var out := []
@@ -150,7 +162,7 @@ func _test_incentive_snapshot() -> void:
 	var s: Dictionary = sim.hero_goal_scores(rogue)
 	# A loot pile is risk-free coin and scores a good deal higher than a
 	# bounty of similar size: the rogue goes for the pile, not the flag.
-	var expect := {"bounty": 12, "treasure": 20, "smite": 2, "patrol": 1}
+	var expect := {"bounty": 8, "treasure": 20, "smite": 2, "patrol": 1}
 	if s.size() != expect.size():
 		_fail("rogue score keys wrong: %s" % s)
 	for k in expect:
@@ -164,7 +176,7 @@ func _test_incentive_snapshot() -> void:
 	if paladin == null:
 		return
 	s = sim.hero_goal_scores(paladin)
-	expect = {"bounty": 10, "smite": 10, "assist": 4, "patrol": 1}
+	expect = {"bounty": 7, "smite": 10, "assist": 4, "patrol": 1}
 	if s.size() != expect.size():
 		_fail("paladin score keys wrong: %s" % s)
 	for k in expect:
@@ -178,7 +190,7 @@ func _test_incentive_snapshot() -> void:
 	if warrior == null:
 		return
 	s = sim.hero_goal_scores(warrior)
-	expect = {"bounty": 20, "treasure": 10, "smite": 4, "assist": 3, "patrol": 1}
+	expect = {"bounty": 12, "treasure": 10, "smite": 4, "assist": 3, "patrol": 1}
 	if s.size() != expect.size():
 		_fail("warrior score keys wrong: %s" % s)
 	for k in expect:
@@ -358,6 +370,159 @@ func _test_loot_pickup() -> void:
 		_fail("rogue never picked up the dropped loot")
 	if sim.loot_piles.has(pile):
 		_fail("loot pile not removed after pickup")
+
+func _test_leisure_goals() -> void:
+	# Idle hours: prayer, an evening at the tavern, and a spot of hunting.
+	# Each only exists when the realm offers it; ventures always outrank it.
+	var sim = _make_sim(263)
+	sim.raids_enabled = false
+	# Pray: a weary paladin and a shrine.
+	if not _build(sim, "shrine", sim.keep_pos + Vector2i(1, 1)):
+		return
+	var pal = _spawn_at(sim, "paladin", sim.keep_pos + Vector2i(-1, -1))
+	if pal == null:
+		return
+	pal.fatigue = 3
+	pal.hp = pal.max_hp - 2
+	var s: Dictionary = sim.hero_goal_scores(pal)
+	if not s.has("pray"):
+		_fail("weary paladin never considers prayer: %s" % s)
+		return
+	if s.has("hunt") or s.has("carouse"):
+		_fail("paladin weighted into the wrong leisure: %s" % s)
+	# Prayer is the weary paladin's favored pursuit, and it comes up in
+	# the draw.
+	if sim._best_hero_goal(sim.hero_goal_scores(pal)) != "pray":
+		_fail("weary paladin's favored pursuit is not prayer")
+	if not _decide_until(sim, pal, "pray", 30):
+		_fail("paladin never set out to pray in 30 draws")
+	var prayed := false
+	for i in 300:
+		sim.update()
+		if pal.fatigue < 3:
+			prayed = true
+			break
+	if not prayed:
+		_fail("paladin never prayed (at %s, %s)" % [pal.tile(), pal.state])
+	if int(pal.hp) != int(pal.max_hp) - 1:
+		_fail("prayer did not mend: hp %d/%d" % [pal.hp, pal.max_hp])
+
+	# Hunt: a charted warren gives rogues game to chase.
+	sim = _make_sim(269)
+	sim.raids_enabled = false
+	var site: Vector2i = sim._wild_den_site("rabbit_warren")
+	if site.x < 0:
+		_fail("no warren site for the hunt test")
+		return
+	sim._place_wild_den("rabbit_warren", site)
+	sim.dens[site].food = 6
+	var rog = _spawn_at(sim, "rogue", sim.keep_pos + Vector2i(-1, -1))
+	if rog == null:
+		return
+	s = sim.hero_goal_scores(rog)
+	if not s.has("hunt"):
+		_fail("rogue never considers hunting: %s" % s)
+		return
+	if s.has("pray") or s.has("carouse"):
+		_fail("rogue weighted into the wrong leisure: %s" % s)
+	# Hunting yields to ventures: a live bounty outranks the chase.
+	sim.bounties[sim._nearest_den(rog.tile())] = {"reward": 18}
+	var bounty_score: int = int(sim.hero_goal_scores(rog).bounty)
+	var hunt_score: int = int(sim.hero_goal_scores(rog).hunt)
+	sim.bounties.clear()
+	if hunt_score >= bounty_score:
+		_fail("hunt (%d) should not outrank a bounty (%d)" % [hunt_score, bounty_score])
+	# The chase is for fresh legs: a weary hero leaves the warrens be.
+	rog.fatigue = 3
+	if sim.hero_goal_scores(rog).has("hunt"):
+		_fail("weary rogue still hooked on hunting")
+	rog.fatigue = 0
+	var xp_before: int = rog.xp
+	# The chase is the fresh rogue's favored pursuit, and it comes up.
+	if sim._best_hero_goal(sim.hero_goal_scores(rog)) != "hunt":
+		_fail("fresh rogue's favored pursuit is not hunting")
+	if not _decide_until(sim, rog, "hunt", 30):
+		_fail("rogue never set out after game in 30 draws")
+	var hunted := false
+	for i in 400:
+		sim.update()
+		if int(sim.dens[site].food) < 6:
+			hunted = true
+			break
+	if not hunted:
+		_fail("rogue never took game (warren food %d)" % int(sim.dens[site].food))
+	if rog.xp <= xp_before:
+		_fail("hunt gave no experience")
+	# The warren keeps its kind: hunting never razed the lair.
+	if not sim.dens.has(site):
+		_fail("hunting destroyed the warren")
+	# Idle hours rotate by odds, not gates: a round of leisure dulls the
+	# appetite (half score, quarter weight in the draw) and wears off.
+	rog.fatigue = 0
+	if rog.leisure_left <= 0:
+		_fail("hunting did not start a leisure cooldown")
+	var dull: int = int(sim.hero_goal_scores(rog).hunt)
+	rog.leisure_left = 0
+	var keen: int = int(sim.hero_goal_scores(rog).hunt)
+	if dull >= keen:
+		_fail("cooldown did not dull the chase: %d vs %d" % [dull, keen])
+
+	# Carouse: a bored rogue at the tavern drinks a coin into the till.
+	sim = _make_sim(271)
+	sim.raids_enabled = false
+	if not _build(sim, "tavern", sim.keep_pos + Vector2i(1, 1)):
+		return
+	rog = _spawn_at(sim, "rogue", sim.keep_pos + Vector2i(-1, -1))
+	if rog == null:
+		return
+	rog.fatigue = 2
+	s = sim.hero_goal_scores(rog)
+	if not s.has("carouse"):
+		_fail("bored rogue never considers the tavern: %s" % s)
+		return
+	# The tavern is the bored rogue's favored pastime, and it comes up.
+	if sim._best_hero_goal(sim.hero_goal_scores(rog)) != "carouse":
+		_fail("bored rogue's favored pursuit is not carousing")
+	if not _decide_until(sim, rog, "carouse", 30):
+		_fail("rogue never set out for the tavern in 30 draws")
+	var caroused := false
+	for i in 300:
+		sim.update()
+		if rog.fatigue < 2:
+			caroused = true
+			break
+	if not caroused:
+		_fail("rogue never caroused (at %s, %s)" % [rog.tile(), rog.state])
+	var till: int = int(sim.buildings[sim.keep_pos + Vector2i(1, 1)].tax)
+	if till < 1:
+		_fail("carousing left the tavern till empty")
+	# Dice nights rotate too: one evening dulls the appetite, never
+	# locks the tavern door.
+	if rog.leisure_left <= 0:
+		_fail("carousing did not start a leisure cooldown")
+	var dull_c: int = int(sim.hero_goal_scores(rog).carouse)
+	rog.leisure_left = 0
+	var keen_c: int = int(sim.hero_goal_scores(rog).carouse)
+	if dull_c >= keen_c:
+		_fail("cooldown did not dull the tavern: %d vs %d" % [dull_c, keen_c])
+
+func _test_fast_first_arrival() -> void:
+	# Finishing a hall pulls the attraction roll forward to ~10 ticks: the
+	# first hero steps out within seconds, not after a stale 2-minute cycle.
+	# Chance forced to 1 so the timing itself is what is under test.
+	var sim = _make_sim(273)
+	sim.raids_enabled = false
+	sim.hero_arrival_chance = 1.0
+	if not _build(sim, "tavern", sim.keep_pos + Vector2i(1, 1)):
+		return
+	var arrived := false
+	for i in 12:
+		sim.update()
+		if _count(sim, "hero") > 0:
+			arrived = true
+			break
+	if not arrived:
+		_fail("no hero within 12 ticks of the tavern's finish")
 
 func _test_long_run() -> void:
 	# ~10 game years with everything on: raids, heroes, bounties posted by

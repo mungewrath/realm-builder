@@ -29,6 +29,7 @@ func _make_sim(seed_value: int):
 	var WorldC = load("res://scripts/world.gd").new()
 	WorldC.generate(seed_value)
 	var sim = load("res://scripts/kingdom.gd").new()
+	sim.wild_ecology = false # fog accounting; ecology has its own suite
 	sim.attach_world(WorldC)
 	sim.raids_enabled = false # fog behavior, not warband pacing
 	return sim

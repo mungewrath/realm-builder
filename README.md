@@ -63,6 +63,9 @@ godot --headless --script tests/heroes_test.gd
 # Run the fog-of-war tests (reveal, landmarks, gating, perf budget)
 godot --headless --script tests/fog_test.gd
 
+# Run the ecology tests (wild dens, creatures, food chains, migration)
+godot --headless --script tests/ecology_test.gd
+
 # First editor scan (builds .godot/ cache, registers class_name)
 godot --headless --editor --quit
 
@@ -119,7 +122,7 @@ unattended, enable linger: `sudo loginctl enable-linger $USER`.
 project.godot          Godot project config (gl_compatibility renderer)
 scenes/main.tscn       Main scene (UI + game view)
 scripts/kingdom.gd     Pure simulation logic (no UI dependencies)
-scripts/agents.gd      Pure sim agents: peasants, tax collector, goblin raiders, guards, heroes
+scripts/agents.gd      Pure sim agents: peasants, tax collector, goblin raiders, guards, heroes, wild creatures
 scripts/descriptions.gd  Inspector flavor text (blurbs, vague statuses)
 scripts/minimap.gd       Miniature map (charted ground, viewport outline, tap-to-jump)
 scripts/main.gd        View layer: wires UI to the sim
@@ -130,6 +133,7 @@ tests/inspect_test.gd  Headless inspector content tests
 tests/raids_test.gd    Headless raid tests (dens, cooldowns, razes, guards, clearing)
 tests/heroes_test.gd   Headless hero tests (attraction, scoring, bounties, loot)
 tests/fog_test.gd      Headless fog tests (reveal, landmarks, gating, perf)
+tests/ecology_test.gd  Headless ecology tests (wild dens, food chains, migration)
 server/serve_https.py  LAN HTTPS server for the web build
 builds/web/            Exported web build (regenerable, not committed)
 export_presets.cfg     Web export preset (thread support off)

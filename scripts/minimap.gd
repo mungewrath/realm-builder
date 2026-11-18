@@ -65,12 +65,15 @@ func _draw() -> void:
 		draw_rect(Rect2(Vector2(p) * PX, Vector2(PX, PX)), col)
 	if sim.get("dens") != null:
 		for p in sim.dens:
-			# Landmarks appear on the minimap only once charted.
+			# Landmarks appear on the minimap only once charted. Hostile
+			# dens burn red; wild lairs read as earthy ground.
 			if sim.fog_enabled and sim.explored[p.y * world.SIZE_X + p.x] == 0:
 				continue
-			draw_rect(Rect2(Vector2(p) * PX, Vector2(PX, PX)), Color(0.7, 0.15, 0.12))
+			var hostile: bool = sim.DEN_KINDS[sim.dens[p].get("kind", "goblin_den")].hostile
+			draw_rect(Rect2(Vector2(p) * PX, Vector2(PX, PX)),
+				Color(0.7, 0.15, 0.12) if hostile else Color(0.5, 0.4, 0.24))
 	for a in sim.agents:
-		if a.kind == "goblin":
+		if a.kind == "goblin" or a.kind == "creature":
 			continue
 		if a.kind == "peasant":
 			continue # too many dots; the realm folk live where you can see

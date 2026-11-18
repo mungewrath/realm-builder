@@ -183,12 +183,14 @@ func _layout_inspect_panel() -> void:
 		inspect_panel.offset_bottom = -210.0
 
 func _agents_here(p: Vector2i) -> Array:
-	# Goblins in ground no one has charted stay hidden even when tapped blind.
+	# Goblins and wild creatures in ground no one has charted stay hidden
+	# even when tapped blind.
 	var here := []
 	for a in sim.agents:
 		if a.tile() != p:
 			continue
-		if a.kind == "goblin" and not sim.explored_at(p):
+		if (a.kind == "goblin" or a.kind == "creature") \
+				and not sim.explored_at(p):
 			continue
 		here.append(a)
 	return here
@@ -221,8 +223,9 @@ func _fill_tile_inspect(b, den, pile_gold: int) -> void:
 		inspect_blurb.text = Descriptions.building_blurb(b.kind)
 		inspect_status.text = Descriptions.building_status(b.kind, selected_tile, b, sim)
 	elif den != null:
-		inspect_title.text = Descriptions.den_title()
-		inspect_blurb.text = Descriptions.den_blurb()
+		var kind_key: String = den.get("kind", "goblin_den")
+		inspect_title.text = Descriptions.den_title(kind_key)
+		inspect_blurb.text = Descriptions.den_blurb(kind_key)
 		inspect_status.text = Descriptions.den_status(den, selected_tile, sim)
 	elif pile_gold > 0:
 		inspect_title.text = Descriptions.loot_title()
@@ -230,8 +233,9 @@ func _fill_tile_inspect(b, den, pile_gold: int) -> void:
 		inspect_status.text = Descriptions.loot_status(pile_gold)
 
 func _refresh_action(p: Vector2i, den) -> void:
-	# One-tap bounty flags live on the den's inspector card.
-	if den == null or not dens_reachable(p):
+	# One-tap bounty flags live on the den's inspector card — hostile dens
+	# only; wild lairs are not a den of evil.
+	if den == null or not dens_reachable(p) or not sim.is_hostile_den(p):
 		inspect_action.visible = false
 		return
 	if sim.bounties.has(p):

@@ -28,12 +28,21 @@ const REST := "rest"
 const TREASURE := "treasure"
 const ASSIST := "assist"
 
+# M6.1 leisure legs: hunting game at a warren, prayer at a shrine, an
+# evening at the tavern.
+const PRAY := "pray"
+const CAROUSE := "carouse"
+
 # Goblin behavior states (personal, weighted-random; the den overlays its
 # own mood on the idle warband). LURK is never a movement purpose.
 const LURK := "lurk"
 const WANDER := "wander"
 const PROWL := "prowl"
 const FORAGE := "forage"
+
+# M6.1 wild creatures: a predator's leg to a prey den (or a farm, when the
+# wild prey is gone). FORAGE doubles as the rabbit's graze leg.
+const HUNT := "hunt"
 
 # M5: hero exploration leg — chart the unknown when nothing is known.
 const EXPLORE := "explore"
@@ -70,6 +79,11 @@ var fatigue := 0
 var decision_left := 0
 # M5 fog bookkeeping: last tile this agent already revealed from.
 var fog_tile := Vector2i(-1, -1)
+# M6.1 wild ecology: species row id for creature agents.
+var species := ""
+# Leisure cooldown (M6.1): ticks during which hunt/carouse are off the
+# books after a round of them, so idle hours rotate instead of repeating.
+var leisure_left := 0
 
 func setup(k, kind_value: String, spawn: Vector2i) -> void:
 	kingdom = k
@@ -84,6 +98,12 @@ func setup(k, kind_value: String, spawn: Vector2i) -> void:
 			speed = SPEED * (0.7 + 0.3 * kingdom.rng.randf())
 		"guard":
 			hp = kingdom.guard_hp
+			max_hp = hp
+		"creature":
+			# Species must be set before setup(); stats come from the row.
+			var stats: Dictionary = kingdom.CREATURE_STATS[species]
+			speed = stats.speed
+			hp = stats.hp
 			max_hp = hp
 
 func tile() -> Vector2i:
@@ -182,7 +202,7 @@ func _arrived() -> void:
 				RAID:
 					state = ACTING
 					work_left = kingdom.GOBLIN_RAZE_TICKS
-				INTERCEPT, ASSAULT:
+				INTERCEPT, ASSAULT, HUNT:
 					state = ACTING
 					work_left = 1
 				PATROL:
@@ -196,7 +216,7 @@ func _arrived() -> void:
 					# expires.
 					state = IDLE
 					purpose = ""
-				SHOP, TREASURE, ASSIST:
+				SHOP, TREASURE, ASSIST, PRAY, CAROUSE:
 					state = ACTING
 					work_left = 1
 				REST:
@@ -256,16 +276,39 @@ func _finish_work() -> void:
 			state = RETURNING
 			path = kingdom.find_path(tile(), kingdom.den_doorstep(home, tile()))
 		FORAGE:
-			carrying = kingdom.FORAGE_CARRY
+			# Goblins haul grubs by the armful; wild creatures graze light.
+			carrying = kingdom.FORAGE_CARRY if kind != "creature" \
+				else kingdom.CREATURE_STATS[species].carry
 			loot_kind = "food"
 			state = RETURNING
-			path = kingdom.find_path(tile(), kingdom.den_doorstep(home, tile()))
+			var dest: Vector2i = kingdom.den_doorstep(home, tile()) \
+				if kind == "goblin" else home
+			path = kingdom.find_path(tile(), dest)
+		HUNT:
+			if kind == "hero":
+				# The hero's spot of hunting: thin the warren's game.
+				kingdom.hero_hunt(self)
+				state = IDLE
+				purpose = ""
+			else:
+				# The predator's kill lands in the home den's larder.
+				kingdom.hunt_strike(target, self)
+				state = RETURNING
+				path = kingdom.find_path(tile(), home)
 		SHOP:
 			kingdom.hero_shop(self)
 			state = IDLE
 			purpose = ""
 		REST:
 			kingdom.hero_rest(self)
+			state = IDLE
+			purpose = ""
+		PRAY:
+			kingdom.hero_pray(self)
+			state = IDLE
+			purpose = ""
+		CAROUSE:
+			kingdom.hero_carouse(self)
 			state = IDLE
 			purpose = ""
 		TREASURE:

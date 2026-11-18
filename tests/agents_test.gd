@@ -24,6 +24,7 @@ func _make_sim(seed_value: int):
 	var WorldC = load("res://scripts/world.gd").new()
 	WorldC.generate(seed_value)
 	var sim = load("res://scripts/kingdom.gd").new()
+	sim.wild_ecology = false # exact accounting; ecology has its own suite
 	sim.attach_world(WorldC)
 	sim.set_fog_enabled(false) # build/gating accounting without fog gates
 	sim.keep_trickle = 0 # exact gold accounting; trickle has its own check

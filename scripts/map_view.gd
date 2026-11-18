@@ -316,6 +316,17 @@ func _draw_building(p: Vector2i, b: Dictionary) -> void:
 			draw_circle(Vector2(origin.x + TILE / 2.0, origin.y + 12), 3.0, GOLD)
 
 func _draw_den(p: Vector2i, den: Dictionary) -> void:
+	var kind_key: String = den.get("kind", "goblin_den")
+	if kind_key == "goblin_den":
+		_draw_goblin_den(p, den)
+	elif kind_key == "rabbit_warren":
+		_draw_warren(p)
+	elif kind_key == "wolf_den":
+		_draw_wolf_den(p)
+	else:
+		_draw_spider_den(p)
+
+func _draw_goblin_den(p: Vector2i, den: Dictionary) -> void:
 	# Cave mouth with a tattered red pennant; level pips show how bold it is.
 	var origin := Vector2(p.x * TILE, p.y * TILE)
 	var mouth := Vector2(origin.x + TILE / 2.0, origin.y + TILE - 5)
@@ -338,6 +349,33 @@ func _draw_den(p: Vector2i, den: Dictionary) -> void:
 		])
 		draw_colored_polygon(bpennant, GOLD)
 
+func _draw_warren(p: Vector2i) -> void:
+	# A rabbit warren: a sandy mound with burrow holes.
+	var origin := Vector2(p.x * TILE, p.y * TILE)
+	draw_circle(origin + Vector2(TILE / 2.0, TILE - 8), 9.0, Color(0.62, 0.52, 0.36))
+	draw_circle(origin + Vector2(TILE / 2.0, TILE - 6), 6.0, Color(0.12, 0.09, 0.06))
+	draw_circle(origin + Vector2(10, TILE - 11), 3.0, Color(0.12, 0.09, 0.06))
+	draw_circle(origin + Vector2(TILE - 10, TILE - 11), 3.0, Color(0.12, 0.09, 0.06))
+
+func _draw_wolf_den(p: Vector2i) -> void:
+	# A wolf den: a dark hollow under a leaning root, paw prints beside it.
+	var origin := Vector2(p.x * TILE, p.y * TILE)
+	var mouth := Vector2(origin.x + TILE / 2.0, origin.y + TILE - 5)
+	draw_circle(mouth, 10.0, Color(0.14, 0.12, 0.1))
+	draw_circle(mouth + Vector2(0, 2), 7.0, Color(0.05, 0.04, 0.04))
+	draw_circle(origin + Vector2(9, 12), 2.0, Color(0.2, 0.16, 0.13))
+	draw_circle(origin + Vector2(TILE - 9, 15), 2.0, Color(0.2, 0.16, 0.13))
+
+func _draw_spider_den(p: Vector2i) -> void:
+	# A spider nest: a cave mouth veiled in web strands.
+	var origin := Vector2(p.x * TILE, p.y * TILE)
+	var mouth := Vector2(origin.x + TILE / 2.0, origin.y + TILE - 5)
+	draw_circle(mouth, 10.0, Color(0.09, 0.08, 0.1))
+	for n in 4:
+		var a := n * PI / 4.0 + 0.3
+		draw_line(mouth, mouth + Vector2(cos(a), sin(a) * 0.7 - 0.5) * 13.0,
+			Color(0.85, 0.85, 0.9, 0.55), 1.2)
+
 func _draw_loot_pile(p: Vector2i) -> void:
 	# A spilled purse: a little heap of coins on the ground.
 	var origin := Vector2(p.x * TILE, p.y * TILE)
@@ -358,12 +396,19 @@ func _draw_site(p: Vector2i, kind: String) -> void:
 	])
 	draw_colored_polygon(flag, Color(0.92, 0.75, 0.25))
 
+const CREATURE_COLORS := {
+	"rabbit": Color(0.85, 0.8, 0.72),
+	"wolf": Color(0.42, 0.4, 0.42),
+	"spider": Color(0.12, 0.1, 0.14),
+}
+
 func _draw_agents() -> void:
 	for a in sim.agents:
-		# Goblins only show when someone from the realm can actually see
-		# them; the realm's own folk are always drawn (heroes are the
-		# explorers lighting the way).
-		if a.kind == "goblin" and _fog_level(a.tile()) < 2:
+		# Goblins and wild creatures only show when someone from the realm
+		# can actually see them; the realm's own folk are always drawn
+		# (heroes are the explorers lighting the way).
+		if (a.kind == "goblin" or a.kind == "creature") \
+				and _fog_level(a.tile()) < 2:
 			continue
 		var c: Vector2 = a.pos * float(TILE)
 		match a.kind:
@@ -383,6 +428,21 @@ func _draw_agents() -> void:
 			"guard":
 				draw_circle(c, 4.5, Color(0.45, 0.55, 0.7))
 				draw_line(c + Vector2(3, 2), c + Vector2(-3, -6), Color(0.85, 0.85, 0.9), 1.5)
+			"creature":
+				var col: Color = CREATURE_COLORS.get(a.species, Color(0.7, 0.6, 0.5))
+				draw_circle(c, 3.5, col)
+				match a.species:
+					"wolf":
+						draw_line(c + Vector2(0, -3), c + Vector2(0, -6), col, 2.0)
+					"spider":
+						for n in 4:
+							var leg_a := n * PI / 4.0
+							draw_line(c, c + Vector2(cos(leg_a), sin(leg_a)) * 6.0, col, 1.2)
+					"rabbit":
+						draw_circle(c + Vector2(1.5, -4.0), 1.2, col)
+						draw_circle(c + Vector2(-1.5, -4.0), 1.2, col)
+				if a.carrying > 0:
+					draw_circle(c + Vector2(5.0, -4.0), 2.5, Color(0.7, 0.75, 0.45))
 			"hero":
 				# Class-colored figure with a sword and level pips overhead.
 				draw_circle(c, 5.0, HERO_COLORS.get(a.hero_class, Color(0.8, 0.8, 0.8)))
