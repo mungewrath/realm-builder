@@ -2,8 +2,8 @@ extends SceneTree
 
 # M6.1 ecology tests: seeded wild lairs on the right ground, prey regrowth,
 # the hunt chain (wolves → warrens, spiders → goblin dens), den needs —
-# migration vs starvation — and the realm gating (no building or bounty on
-# wild dens, heroes smite only dens of evil). Ends with a long-run sim and
+# migration vs starvation — and the realm gating (no building on wild
+# dens; bounties work on any lair, heroes smite only dens of evil). Ends with a long-run sim and
 # a headless tick budget with everything running.
 
 var failed := false
@@ -17,6 +17,7 @@ func _initialize() -> void:
 	_test_starvation()
 	_test_prey_migration()
 	_test_gating()
+	_test_wild_bounty_clear()
 	_test_hero_gating()
 	_test_creatures_reveal_nothing()
 	_test_fog_discovery()
@@ -88,6 +89,8 @@ func _test_seeded_lairs() -> void:
 	for p in wild:
 		var row = sim.DEN_KINDS[sim.dens[p].kind]
 		var want: int = sim.world.GRASS if row.site == "grass" else sim.world.FOREST
+		if row.site == "mountain_edge":
+			want = sim.world.MOUNTAIN
 		if sim.world.get_terrain(p) != want:
 			_fail("wild den %s squatting on wrong terrain" % p)
 		if Vector2(p).distance_to(Vector2(sim.keep_pos)) < 8:
@@ -296,6 +299,10 @@ func _test_prey_migration() -> void:
 	sim.prey_regrow_ticks = 1000000
 	var warren: Vector2i = _dens_of_kind(sim, "rabbit_warren")[0]
 	sim.dens[warren].food = 0
+	# With no rabbits left to graze it back up, the larder stays empty.
+	for a in sim.agents.duplicate():
+		if a.kind == "creature" and a.home == warren:
+			sim.agents.erase(a)
 	var migrated := false
 	for i in 200:
 		sim.update()
@@ -313,7 +320,8 @@ func _test_prey_migration() -> void:
 			_fail("warren migrated off the meadows")
 
 func _test_gating() -> void:
-	# The realm does not build on warrens and does not bounty wild lairs.
+	# The realm does not build on warrens — but any lair can be flagged with
+	# a bounty, while the realm's own buildings cannot.
 	var sim = _make_sim(319)
 	var warren: Vector2i = _dens_of_kind(sim, "rabbit_warren")[0]
 	if sim.can_build_at(warren):
@@ -325,16 +333,65 @@ func _test_gating() -> void:
 		_fail("failed build still charged gold")
 	if sim.last_event != "Wild beasts den there":
 		_fail("wrong blocked-build wording: %s" % sim.last_event)
-	if sim.post_bounty(warren):
-		_fail("bounty posted on a wild lair")
-	if sim.gold != gold_before:
-		_fail("failed bounty still charged gold")
-	if sim.bounties.has(warren):
-		_fail("wild lair carries a bounty flag")
-	# Smite targets stay dens of evil even when a wild lair is closer.
+	if not sim.post_bounty(warren):
+		_fail("bounty refused on a wild lair")
+	if sim.gold != gold_before - sim.BOUNTY_FEE:
+		_fail("bounty fee not charged on a wild lair")
+	if not sim.bounties.has(warren):
+		_fail("wild lair carries no bounty flag")
+	var gold_after_bounty: int = sim.gold
+	if sim.post_bounty(sim.keep_pos):
+		_fail("bounty posted on the realm's own keep")
+	if sim.gold != gold_after_bounty:
+		_fail("refused bounty still charged gold")
+	# Smite targets stay dens of evil, never a wild lair — even one closer by.
+	# (Bandit camps and hag covens are hostile wild lairs, so any of those
+	# is a fair target; a warren is not.)
 	var nearest = sim._nearest_den(warren)
-	if nearest.x < 0 or sim.dens[nearest].get("kind", "") != "goblin_den":
+	if nearest.x < 0 or not sim.is_hostile_den(nearest):
 		_fail("smite targeting picked a wild lair")
+	if sim.dens[nearest].get("kind", "") == "rabbit_warren":
+		_fail("smite targeting picked a rabbit warren")
+
+func _test_wild_bounty_clear() -> void:
+	# A flag on a wild lair is a real job: the hero can storm it, the bounty
+	# is banked, and the lair's creatures die with it.
+	var sim = _make_sim(333)
+	_quiet_wilds(sim)
+	var warren: Vector2i = _dens_of_kind(sim, "rabbit_warren")[0]
+	sim.gold = 100
+	if not sim.post_bounty(warren):
+		_fail("wild lair refused a bounty")
+		return
+	var reward: int = int(sim.bounties[warren].reward)
+	var AgentC = load("res://scripts/agents.gd")
+	var h = AgentC.new()
+	h.setup(sim, "hero", sim.den_doorstep(warren, sim.keep_pos))
+	h.hero_class = "rogue"
+	h.level = 1
+	h.max_hp = 10
+	h.hp = h.max_hp
+	h.home = sim.keep_pos
+	h.purpose = AgentC.ASSAULT
+	h.quest_den = warren
+	h.state = AgentC.ACTING
+	h.work_left = 1
+	sim.agents.append(h)
+	var fell := false
+	for i in 60:
+		sim.update()
+		if not sim.dens.has(warren):
+			fell = true
+			break
+	if not fell:
+		_fail("bounty never brought the wild lair down")
+		return
+	if int(h.pouch) < reward:
+		_fail("wild-lair bounty not banked: %d" % h.pouch)
+	for a in _creatures(sim):
+		if a.home == warren:
+			_fail("creatures outlived their cleared lair")
+			break
 
 func _test_hero_gating() -> void:
 	# A paladin's incentive table must read wild lairs as no smiting matter.

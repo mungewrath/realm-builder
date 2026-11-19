@@ -63,16 +63,22 @@ func _test_den_text() -> void:
 		_fail("den mood statuses not distinct")
 
 func _test_wild_den_text() -> void:
-	# Every den kind gets its own title, blurb, and larder-tiered status.
+	# Every den kind gets its own title, blurb, and status.
 	var D = load("res://scripts/descriptions.gd")
 	var titles := {}
-	for kind in ["goblin_den", "rabbit_warren", "wolf_den", "spider_den"]:
+	var kinds := ["goblin_den", "rabbit_warren", "wolf_den", "spider_den",
+		"kobold_den", "gnome_enclave", "bandit_camp", "hag_coven"]
+	for kind in kinds:
 		var t: String = D.den_title(kind)
 		if t == "" or D.den_blurb(kind) == "":
 			_fail("missing den text for %s" % kind)
 		titles[t] = kind
-	if titles.size() != 4:
-		_fail("wild den titles not distinct: %s" % titles.keys())
+	if titles.size() != kinds.size():
+		_fail("den titles not distinct: %s" % titles.keys())
+	for kind in kinds:
+		var s: String = D.den_status({"kind": kind, "food": 3, "gold": 2})
+		if s == "":
+			_fail("empty den status for %s" % kind)
 	var tiers := {}
 	for food in [0, 2, 6]:
 		var s: String = D.den_status({"kind": "rabbit_warren", "food": food})
@@ -274,3 +280,18 @@ func _test_agent_lines() -> void:
 	a.behavior = "lurk"
 	if D.agent_line(a).findn("standing easy") == -1:
 		_fail("guard away standing-easy line missing")
+	# Assault lines name the actual lair, not always "goblin den".
+	a.kind = "hero"
+	a.state = "acting"
+	a.purpose = "assault"
+	var kp: Vector2i = sim.keep_pos + Vector2i(2, 2)
+	sim.dens[kp] = {"kind": "kobold_den", "level": 1, "hp": 1, "food": 1,
+		"gold": 0, "unmet": 0, "regrow": 0}
+	a.quest_den = kp
+	var hero_line: String = D.agent_line(a)
+	if hero_line.findn("kobold burrow") == -1:
+		_fail("hero assault line should name the lair: " + hero_line)
+	if hero_line.findn("goblin") != -1:
+		_fail("hero assault line still says goblin den: " + hero_line)
+	sim.dens.erase(kp)
+	a.quest_den = Vector2i.ZERO

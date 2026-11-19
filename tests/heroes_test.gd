@@ -13,6 +13,7 @@ func _initialize() -> void:
 	_test_incentive_snapshot()
 	_test_shop_and_rest_loop()
 	_test_hero_combat_and_levels()
+	_test_hero_aggro()
 	_test_bounty_flow()
 	_test_death_drops_loot()
 	_test_loot_pickup()
@@ -289,6 +290,107 @@ func _test_hero_combat_and_levels() -> void:
 	if h.max_hp < 12:
 		_fail("level up did not grow max_hp: %d" % h.max_hp)
 
+func _spawn_foe(sim, at: Vector2i):
+	var AgentC = load("res://scripts/agents.gd")
+	var g = AgentC.new()
+	g.setup(sim, "goblin", at)
+	g.home = sim.dens.keys()[0]
+	g.pos = Vector2(at) + Vector2(0.5, 0.5)
+	g.path = []
+	g.state = "idle"
+	g.purpose = ""
+	sim.agents.append(g)
+	return g
+
+func _reachable_spot(sim, origin: Vector2i, dist: int) -> Vector2i:
+	# A walkable tile at (about) the given Chebyshev distance, reachable
+	# from the origin by the same pathing the sim uses.
+	for d in [Vector2i(dist, 0), Vector2i(-dist, 0), Vector2i(0, dist),
+			Vector2i(0, -dist), Vector2i(dist, dist), Vector2i(-dist, dist),
+			Vector2i(dist, -dist), Vector2i(-dist, -dist)]:
+		var p: Vector2i = origin + d
+		if not sim.world.in_bounds(p) or not sim.world._walkable(p):
+			continue
+		if not sim.find_path(origin, p).is_empty():
+			return p
+	return Vector2i(-9999, -9999)
+
+func _test_hero_aggro() -> void:
+	var sim = _make_sim(241)
+	sim.raids_enabled = false
+	_only_den(sim)
+	var h = _spawn_at(sim, "warrior", sim.keep_pos)
+	if h == null:
+		return
+	var AgentC = load("res://scripts/agents.gd")
+	# A visible enemy in the vicinity is a fight the hero starts.
+	var near: Vector2i = _reachable_spot(sim, h.tile(), 4)
+	if near.x < 0:
+		_fail("no reachable spot for the aggro test")
+		return
+	var g = _spawn_foe(sim, near)
+	sim.update()
+	if h.target_agent != g or h.purpose != AgentC.INTERCEPT:
+		_fail("hero ignored an enemy in the vicinity")
+		return
+	var gobs := 0
+	for i in 120:
+		sim.update()
+		gobs = 0
+		for a in sim.agents:
+			if a.kind == "goblin":
+				gobs += 1
+		if gobs == 0:
+			break
+	if gobs != 0:
+		_fail("aggroed hero never reached the enemy")
+		return
+
+	# Beyond both radii an enemy is none of the hero's business.
+	var far: Vector2i = _reachable_spot(sim, h.tile(), int(sim.hero_alarm_radius) + 2)
+	if far.x >= 0:
+		var f = _spawn_foe(sim, far)
+		h.state = "idle"
+		h.purpose = ""
+		h.target_agent = null
+		h.fighting = false
+		h.path = []
+		sim.update()
+		if h.target_agent == f:
+			_fail("hero chased an enemy beyond aggro range")
+		sim.agents.erase(f)
+
+	# A raider (or any foe at a building's door) raises the alarm farther out.
+	var alarm: Vector2i = _reachable_spot(sim, h.tile(), int(sim.hero_aggro_radius) + 2)
+	if alarm.x >= 0:
+		var r = _spawn_foe(sim, alarm)
+		r.purpose = AgentC.RAID
+		h.state = "idle"
+		h.purpose = ""
+		h.target_agent = null
+		h.fighting = false
+		h.path = []
+		sim.update()
+		if h.target_agent != r:
+			_fail("hero ignored a raider beyond the quiet radius")
+		sim.agents.erase(r)
+
+	# Overriding needs: a hero resting indoors or fleeing does not bite.
+	var g2 = _spawn_foe(sim, _reachable_spot(sim, h.tile(), 3))
+	h.state = AgentC.ACTING
+	h.purpose = AgentC.REST
+	h.work_left = 50
+	h.target_agent = null
+	sim.update()
+	if h.target_agent != null:
+		_fail("resting hero left the tavern to fight")
+	h.state = AgentC.FLEEING
+	h.purpose = ""
+	sim.update()
+	if h.target_agent != null:
+		_fail("fleeing hero turned to fight")
+	sim.agents.erase(g2)
+
 func _test_bounty_flow() -> void:
 	var sim = _make_sim(239)
 	sim.raids_enabled = false
@@ -486,11 +588,17 @@ func _test_leisure_goals() -> void:
 	if not _decide_until(sim, rog, "carouse", 30):
 		_fail("rogue never set out for the tavern in 30 draws")
 	var caroused := false
+	var lingered := 0
 	for i in 300:
 		sim.update()
+		if rog.state == "acting" and rog.purpose == "carouse":
+			lingered = maxi(lingered, rog.work_left)
 		if rog.fatigue < 2:
 			caroused = true
 			break
+	# A tavern evening is a while, not a single tick.
+	if lingered <= 1:
+		_fail("rogue caroused on the doorstep (work_left %d)" % lingered)
 	if not caroused:
 		_fail("rogue never caroused (at %s, %s)" % [rog.tile(), rog.state])
 	var till: int = int(sim.buildings[sim.keep_pos + Vector2i(1, 1)].tax)

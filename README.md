@@ -66,6 +66,9 @@ godot --headless --script tests/fog_test.gd
 # Run the ecology tests (wild dens, creatures, food chains, migration)
 godot --headless --script tests/ecology_test.gd
 
+# Run the faction tests (tension, kobold/gnome feud, bandits, hags)
+godot --headless --script tests/factions_test.gd
+
 # First editor scan (builds .godot/ cache, registers class_name)
 godot --headless --editor --quit
 
@@ -134,6 +137,7 @@ tests/raids_test.gd    Headless raid tests (dens, cooldowns, razes, guards, clea
 tests/heroes_test.gd   Headless hero tests (attraction, scoring, bounties, loot)
 tests/fog_test.gd      Headless fog tests (reveal, landmarks, gating, perf)
 tests/ecology_test.gd  Headless ecology tests (wild dens, food chains, migration)
+tests/factions_test.gd  Headless faction tests (tension, feud, bandits, curses)
 server/serve_https.py  LAN HTTPS server for the web build
 builds/web/            Exported web build (regenerable, not committed)
 export_presets.cfg     Web export preset (thread support off)

@@ -44,6 +44,9 @@ const FORAGE := "forage"
 # wild prey is gone). FORAGE doubles as the rabbit's graze leg.
 const HUNT := "hunt"
 
+# M6.2 bandits: shadow a laden purse and lift it on the road.
+const MUG := "mug"
+
 # M5: hero exploration leg — chart the unknown when nothing is known.
 const EXPLORE := "explore"
 
@@ -98,6 +101,9 @@ func setup(k, kind_value: String, spawn: Vector2i) -> void:
 			speed = SPEED * (0.7 + 0.3 * kingdom.rng.randf())
 		"guard":
 			hp = kingdom.guard_hp
+			max_hp = hp
+		"bandit":
+			hp = kingdom.bandit_hp
 			max_hp = hp
 		"creature":
 			# Species must be set before setup(); stats come from the row.
@@ -202,9 +208,18 @@ func _arrived() -> void:
 				RAID:
 					state = ACTING
 					work_left = kingdom.GOBLIN_RAZE_TICKS
-				INTERCEPT, ASSAULT, HUNT:
+				INTERCEPT, ASSAULT:
 					state = ACTING
 					work_left = 1
+				MUG:
+					# The lift itself is quick; the shadowing is the work.
+					state = ACTING
+					work_left = 1
+				HUNT:
+					# A hero's spot of hunting takes a little while; a
+					# predator's pounce is over in one bound.
+					state = ACTING
+					work_left = kingdom.HERO_HUNT_TICKS if kind == "hero" else 1
 				PATROL:
 					state = ACTING
 					work_left = kingdom.GUARD_PATROL_WAIT
@@ -216,9 +231,15 @@ func _arrived() -> void:
 					# expires.
 					state = IDLE
 					purpose = ""
-				SHOP, TREASURE, ASSIST, PRAY, CAROUSE:
+				SHOP, TREASURE, ASSIST:
 					state = ACTING
 					work_left = 1
+				PRAY:
+					state = ACTING
+					work_left = kingdom.HERO_PRAY_TICKS
+				CAROUSE:
+					state = ACTING
+					work_left = kingdom.HERO_CAROUSE_TICKS
 				REST:
 					state = ACTING
 					work_left = kingdom.HERO_REST_TICKS
@@ -233,6 +254,12 @@ func _arrived() -> void:
 			match kind:
 				"goblin":
 					# Regroup at the den; wounds heal slowly there.
+					state = IDLE
+					purpose = ""
+				"bandit":
+					# Lie low at camp until the watch loses interest.
+					target_agent = null
+					fighting = false
 					state = IDLE
 					purpose = ""
 				"guard":
@@ -253,7 +280,8 @@ func _arrived() -> void:
 func _finish_work() -> void:
 	match purpose:
 		FARM:
-			carrying = kingdom.FARM_CARRY
+			# A cursed field yields nothing: the harvest withers in the rows.
+			carrying = 0 if kingdom.is_cursed(target) else kingdom.FARM_CARRY
 			state = RETURNING
 			path = kingdom.find_path(tile(), kingdom.keep_pos)
 		BUILD:
@@ -295,6 +323,9 @@ func _finish_work() -> void:
 				kingdom.hunt_strike(target, self)
 				state = RETURNING
 				path = kingdom.find_path(tile(), home)
+		MUG:
+			# The purse is lifted; the bandit slips back to camp with it.
+			kingdom.bandit_mug(self)
 		SHOP:
 			kingdom.hero_shop(self)
 			state = IDLE

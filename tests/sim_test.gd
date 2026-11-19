@@ -107,6 +107,32 @@ func _initialize() -> void:
 		failed = true
 		print("FAIL: recovered realm could not build")
 
+	# Event log scrollback: every announcement is recorded with a monotonic
+	# id and timestamp, and the ring is capped.
+	var logsim = load("res://scripts/kingdom.gd").new()
+	var w3 = load("res://scripts/world.gd").new()
+	w3.generate(42)
+	logsim.attach_world(w3)
+	var log_before: int = logsim.event_log.size()
+	logsim.last_event = "Test event A"
+	logsim.update()
+	logsim.last_event = "Test event B"
+	if logsim.event_log.size() != log_before + 2:
+		failed = true
+		print("FAIL: event log missed announcements")
+	elif logsim.event_log[-1].text != "Test event B":
+		failed = true
+		print("FAIL: event log kept the wrong last entry")
+	elif int(logsim.event_log[-1].id) <= int(logsim.event_log[-2].id):
+		failed = true
+		print("FAIL: event log ids not monotonic")
+	for i in logsim.EVENT_LOG_MAX + 20:
+		logsim.last_event = "spam %d" % i
+	if logsim.event_log.size() != logsim.EVENT_LOG_MAX:
+		failed = true
+		print("FAIL: event log not capped at %d (%d)" \
+			% [logsim.EVENT_LOG_MAX, logsim.event_log.size()])
+
 	print("RESULT: %s (gold=%d pop=%d/%d farms=%d houses=%d delivered=%d)" % ["PASS" if not failed else "FAIL", sim.gold, sim.pop, sim.pop_cap, sim.farms, sim.houses, sim.food_delivered])
 	quit(1 if failed else 0)
 

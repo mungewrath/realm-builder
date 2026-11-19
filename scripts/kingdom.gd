@@ -4,6 +4,7 @@ const FARM_COST := 10
 const HOUSE_COST := 15
 const START_GOLD := 50
 const START_POP := 5
+const EVENT_LOG_MAX := 300
 
 const FARM_WORK_TICKS := 2
 const FARM_CARRY := 8
@@ -77,7 +78,7 @@ const HERO_CLASSES := {
 		"attracted_by": "tavern",
 		"hp": 10,
 		"weights": {"bounty": 4, "treasure": 9, "smite_evil": 1, "assist": 0,
-			"hunt": 5, "pray": 0, "carouse": 3},
+			"hunt": 4, "pray": 0, "carouse": 3},
 	},
 	"warrior": {
 		"title": "Warrior",
@@ -102,6 +103,12 @@ const HERO_GOAL_PRIORITY := ["rest", "shop", "smite", "bounty", "treasure",
 const HERO_PURSE_TARGET := 10
 const HERO_FATIGUE_MAX := 5
 const HERO_REST_TICKS := 10
+# Errands are quick, but an evening in the tavern, a quiet hour at the
+# shrine, and a spot of hunting all take a little time — heroes settle
+# in rather than snapping an action off in a single tick.
+const HERO_CAROUSE_TICKS := 8
+const HERO_PRAY_TICKS := 6
+const HERO_HUNT_TICKS := 4
 const HERO_XP_PER_LEVEL := 4
 const BOUNTY_FEE := 20
 const BOUNTY_OVERHEAD := 2 # the posting office's cut; the rest lands on the flag
@@ -122,7 +129,20 @@ var pop_cap: int = START_POP
 var farms: int = 0
 var houses: int = 0
 var tick: int = 0
-var last_event: String = ""
+# Scrollback for the UI event log: every announcement lands here (the setter
+# on `last_event` below appends it), capped so a long game cannot grow it
+# without bound. `id` is monotonic so views can append incrementally even
+# when old entries rotate out.
+var event_log: Array = []
+var event_seq: int = 0
+var last_event: String = "":
+	set(value):
+		last_event = value
+		if value != "":
+			event_seq += 1
+			event_log.append({"id": event_seq, "tick": tick, "text": value})
+			if event_log.size() > EVENT_LOG_MAX:
+				event_log.pop_front()
 var world
 var buildings := {}
 var keep_pos := Vector2i.ZERO
@@ -212,6 +232,69 @@ const DEN_KINDS := {
 		"diet": ["goblin_den"],
 		"spies_as": "A giant spider nest is spied in the woods!",
 	},
+	# M6.2 factions: the hills hold old enemies — kobold burrows and gnome
+	# enclaves squabble over the same ridges — while bandit camps squat by
+	# the roads and hag covens haunt the deep woods.
+	"kobold_den": {
+		"title": "Kobold Burrow",
+		"faction": "kobolds",
+		"hostile": false,
+		"site": "mountain_edge",
+		"role": "thief",
+		"spies_as": "A kobold burrow is spied in the hills!",
+	},
+	"gnome_enclave": {
+		"title": "Gnome Enclave",
+		"faction": "gnomes",
+		"hostile": false,
+		"site": "mountain_edge",
+		"role": "trader",
+		"spies_as": "A gnome enclave is spied in the hills!",
+	},
+	"bandit_camp": {
+		"title": "Bandit Camp",
+		"faction": "bandits",
+		"hostile": true,
+		"site": "grass",
+		"role": "raider",
+		"spies_as": "A bandit camp is spied by the road!",
+	},
+	"hag_coven": {
+		"title": "Hag Coven",
+		"faction": "hags",
+		"hostile": true,
+		"site": "forest",
+		"role": "curser",
+		"spies_as": "A hag coven is spied in the deep woods!",
+	},
+}
+
+# M6.2 — faction tension. A symmetric -3..+3 ledger per pair (positive =
+# alliance-lean), seeded from content-design and shifted by events, drifting
+# back toward indifference. Keys sort the two faction ids so the pair is
+# order-independent.
+const FACTION_BASE_TENSION := {
+	"goblinkin|kobolds": 1,
+	"goblinkin|gnomes": -3,
+	"goblinkin|bandits": 1,
+	"goblinkin|hags": 0,
+	"goblinkin|wilders": -1,
+	"goblinkin|unquiet": 1,
+	"kobolds|gnomes": -3,
+	"kobolds|bandits": 0,
+	"kobolds|hags": 0,
+	"kobolds|wilders": 0,
+	"kobolds|unquiet": -1,
+	"gnomes|bandits": -1,
+	"gnomes|hags": -1,
+	"gnomes|wilders": 1,
+	"gnomes|unquiet": -2,
+	"bandits|hags": 1,
+	"bandits|wilders": 0,
+	"bandits|unquiet": 0,
+	"hags|wilders": 1,
+	"hags|unquiet": 1,
+	"wilders|unquiet": -2,
 }
 
 # Per-species agent stats: pace and constitution (creatures are not
@@ -228,17 +311,47 @@ const PREY_FOOD_CAP := 8
 # Wild ecology: toggle, caps, and pacing. Existing exact-accounting suites
 # run with `wild_ecology` off, same pattern as fog and the gold trickle.
 var wild_ecology := true
-var wild_dens_max := 3
+var wild_dens_max := 8
 var wild_spawn_chance := 0.2
-var wild_spawn_weights := {"rabbit_warren": 40, "wolf_den": 35, "spider_den": 25}
+var wild_spawn_weights := {
+	"rabbit_warren": 26, "wolf_den": 20, "spider_den": 16,
+	"kobold_den": 12, "gnome_enclave": 10, "bandit_camp": 12, "hag_coven": 10,
+}
 var den_migrate_ticks := 300
 var prey_regrow_ticks := 30
+var predator_upkeep_ticks := 200
 var wild_den_rest := 400
 var dens_migrated := 0
 var dens_starved := 0
 var wild_dens_spawned := 0
 var wild_respawn_rest_left := 0
 var hunts_made := 0
+
+# M6.2 — factions & tension. All knobs are vars so tests can compress time.
+var tension := {} # "a|b" -> -3..3, drifting toward 0
+var tension_decay_ticks := 500
+var claim_friction_ticks := 120
+var _claim_left := 120
+var den_claim_radius := 6
+var claims_felt := 0
+var feud_ticks := 200
+var _feud_left := 200
+var feuds_triggered := 0
+var kobold_theft_ticks := 150
+var kobold_thefts := 0
+var gnome_trade_ticks := 200
+var gnome_trade_gold := 1
+var gnome_trades := 0
+var bandit_muster_ticks := 300
+var bandit_hp := 5
+var bandit_take := 10 # the most one mug lifts from a purse
+var bandit_reach := 24 # how far from camp bandits look for purses
+var bandit_mugs := 0
+var bandits_spawned := 0
+var hag_curse_ticks := 300
+var hag_curse_duration := 300
+var hag_reach := 20
+var curses_cast := 0
 
 # M4 — heroes. Attraction pace and hero count are vars so tests and tuning
 # can adjust them. Bounties are the player's one-tap flags on dens; loot
@@ -255,6 +368,12 @@ var hero_cap := 4
 # long — heroes rotate between pastimes and the wilds instead of
 # grinding one warren (or one dice table) until it runs dry.
 var hero_leisure_cooldown := 60
+# Aggro: an enemy in this radius pulls a hero off whatever they were doing
+# and into a fight. Foes caught tearing at a building raise the alarm much
+# farther out. Only overriding needs (fleeing, exhaustion, being indoors)
+# keep a hero from answering.
+var hero_aggro_radius := 6
+var hero_alarm_radius := 12
 var heroes_spawned := 0
 var heroes_fallen := 0
 var dens_cleared_by_heroes := 0
@@ -304,6 +423,7 @@ func attach_world(w) -> void:
 		_reveal_everything()
 	for i in START_POP:
 		_spawn_peasant()
+	_init_tension()
 	_spawn_dens()
 	if wild_ecology:
 		_seed_wild_dens()
@@ -367,9 +487,9 @@ func _fog_tick() -> void:
 	if not fog_enabled:
 		return
 	for a in agents:
-		# Only the realm's folk chart the map. Goblins and wild creatures
-		# reveal nothing — the wild keeps its secrets.
-		if a.kind == "goblin" or a.kind == "creature":
+		# Only the realm's folk chart the map. Goblins, bandits and wild
+		# creatures reveal nothing — the wild keeps its secrets.
+		if a.kind == "goblin" or a.kind == "creature" or a.kind == "bandit":
 			continue
 		var t: Vector2i = a.tile()
 		if t != a.fog_tile:
@@ -472,8 +592,10 @@ func update() -> void:
 	if wild_ecology:
 		_wild_dens_tick()
 		_wild_creatures_tick()
+		_factions_tick()
 	if heroes_enabled:
 		_attraction_tick()
+		_hero_aggro_tick()
 		_assign_heroes()
 	for a in agents:
 		a.update()
@@ -523,9 +645,9 @@ func deliver(a) -> void:
 				food_delivered += a.carrying
 				deliveries += 1
 				a.carrying = 0
-		"goblin", "creature":
-			# Foraged roots, grazed browse and hunted prey all end up in the
-			# home den's stores.
+		"goblin", "creature", "bandit":
+			# Foraged roots, grazed browse, hunted prey and lifted purses all
+			# end up in the home den's stores.
 			if a.carrying > 0:
 				var den: Dictionary = dens.get(a.home, {})
 				if not den.is_empty():
@@ -650,6 +772,8 @@ func _nearest_free_farm(from: Vector2i) -> Vector2i:
 		var b: Dictionary = buildings[p]
 		if b.kind != "farm" or not b.complete:
 			continue
+		if is_cursed(p):
+			continue # a cursed field yields nothing; farmers stay away
 		if _farm_workers(p) >= FARM_WORKERS_PER_FARM:
 			continue
 		var d := Vector2(p).distance_squared_to(Vector2(from))
@@ -691,9 +815,9 @@ func _spawn_dens() -> void:
 	den_respawn_rest_left = den_respawn_rest
 
 func _den_respawn_tick() -> void:
-	# Goblin lairs refill on their own clock; wild dens (ecology) do not
-	# crowd them out of the cap.
-	if _count_hostile_dens() >= dens_max:
+	# Goblin lairs refill on their own clock; other dens (wild ecology) do
+	# not crowd them out of the cap.
+	if _count_goblin_dens() >= dens_max:
 		return
 	if den_respawn_rest_left > 0:
 		den_respawn_rest_left -= 1
@@ -701,6 +825,13 @@ func _den_respawn_tick() -> void:
 	if not _try_spawn_den():
 		# No suitable lair right now: look again after a while.
 		den_respawn_rest_left = 200 + rng.randi_range(0, 200)
+
+func _count_goblin_dens() -> int:
+	var n := 0
+	for p in dens:
+		if dens[p].get("kind", "goblin_den") == "goblin_den":
+			n += 1
+	return n
 
 func _count_hostile_dens() -> int:
 	var n := 0
@@ -1212,8 +1343,10 @@ func is_hostile_den(p: Vector2i) -> bool:
 
 func _wild_den_site(kind_key: String, near := Vector2i(-99, -99), near_r := 0,
 		clearance := DEN_CIV_CLEARANCE, min_keep := DEN_WILD_MIN) -> Vector2i:
-	# A suitable squat for a wild den: right terrain, clear of every other
-	# den and building, and (unless migrating toward prey) far from the keep.
+	# A suitable squat for a den: right terrain, clear of every other den
+	# and building, and (unless migrating toward prey) far from the keep.
+	if DEN_KINDS[kind_key].site == "mountain_edge":
+		return _mountain_edge_site(near, near_r, clearance, min_keep)
 	var terrain_want: int = world.GRASS if DEN_KINDS[kind_key].site == "grass" \
 		else world.FOREST
 	var best := Vector2i(-1, -1)
@@ -1240,6 +1373,42 @@ func _wild_den_site(kind_key: String, near := Vector2i(-99, -99), near_r := 0,
 		return best
 	return pool[rng.randi_range(0, pool.size() - 1)]
 
+func _mountain_edge_pool(clearance := DEN_CIV_CLEARANCE,
+		min_keep := DEN_WILD_MIN) -> Array:
+	# Reachable mountain shoulders the realm could actually march on — the
+	# ground kobolds, gnomes and other hillfolk squat.
+	var pool := []
+	for s in world.mountain_edge_sites():
+		if dens.has(s) or buildings.has(s):
+			continue
+		var door := den_doorstep(s, keep_pos)
+		if Vector2(door).distance_to(Vector2(keep_pos)) < min_keep:
+			continue
+		if find_path(door, keep_pos).is_empty():
+			continue
+		var near_civ := false
+		for b in buildings:
+			if Vector2(b).distance_to(Vector2(door)) < clearance:
+				near_civ = true
+				break
+		if near_civ:
+			continue
+		pool.append(s)
+	return pool
+
+func _mountain_edge_site(near := Vector2i(-99, -99), near_r := 0,
+		clearance := DEN_CIV_CLEARANCE, min_keep := DEN_WILD_MIN) -> Vector2i:
+	var pool := _mountain_edge_pool(clearance, min_keep)
+	if near_r > 0:
+		var near_pool := []
+		for p in pool:
+			if Vector2(p).distance_to(Vector2(near)) <= near_r:
+				near_pool.append(p)
+		pool = near_pool
+	if pool.is_empty():
+		return Vector2i(-1, -1)
+	return pool[rng.randi_range(0, pool.size() - 1)]
+
 func _seed_wild_dens() -> void:
 	# The starting wilds hold prey and a predator: a warren to graze and a
 	# wolf pack to stalk it. Spiders arrive only with the regrowth. Some
@@ -1255,6 +1424,37 @@ func _seed_wild_dens() -> void:
 		woods = _wild_den_site("wolf_den", Vector2i(-99, -99), 0, 4, 8)
 	if woods.x >= 0:
 		_place_wild_den("wolf_den", woods)
+	# The old feud: a kobold burrow and a gnome enclave squat the closest
+	# pair of hill shoulders — claims nearly overlapping from the start, so
+	# the tension ledger has something to grind on. If the hills offer only
+	# one shoulder, the feud waits for a spawn.
+	var edges := _mountain_edge_pool()
+	var kb := Vector2i(-1, -1)
+	var gn := Vector2i(-1, -1)
+	var best_d := INF
+	for i in edges.size():
+		for j in range(i + 1, edges.size()):
+			var d := Vector2(edges[i]).distance_squared_to(Vector2(edges[j]))
+			if d < best_d:
+				best_d = d
+				kb = edges[i]
+				gn = edges[j]
+	if kb.x >= 0:
+		_place_wild_den("kobold_den", kb)
+		_place_wild_den("gnome_enclave", gn)
+	# Roads are dangerous: a bandit camp squats the nearer wilds, and a coven
+	# haunts the woods closest to the settled fields — both within striking
+	# distance of the realm's traffic from the first day.
+	var camp := _wild_den_site("bandit_camp", keep_pos, 24, DEN_CIV_CLEARANCE, 10)
+	if camp.x < 0:
+		camp = _wild_den_site("bandit_camp")
+	if camp.x >= 0:
+		_place_wild_den("bandit_camp", camp)
+	var coven := _wild_den_site("hag_coven", keep_pos, 40)
+	if coven.x < 0:
+		coven = _wild_den_site("hag_coven")
+	if coven.x >= 0:
+		_place_wild_den("hag_coven", coven)
 	wild_respawn_rest_left = wild_den_rest + rng.randi_range(0, 300)
 
 func _place_wild_den(kind_key: String, p: Vector2i, food := WILD_DEN_FOOD_START) -> void:
@@ -1267,9 +1467,13 @@ func _place_wild_den(kind_key: String, p: Vector2i, food := WILD_DEN_FOOD_START)
 		"unmet": 0,
 		"regrow": 0,
 	}
-	var unit: String = DEN_KINDS[kind_key].unit
-	for i in (2 if unit != "spider" else 1):
-		_spawn_creature(unit, p)
+	var role: String = DEN_KINDS[kind_key].get("role", "")
+	if role == "prey" or role == "predator":
+		var unit: String = DEN_KINDS[kind_key].unit
+		for i in (2 if unit != "spider" else 1):
+			_spawn_creature(unit, p)
+	elif role == "raider":
+		_spawn_bandit(p)
 	if not fog_enabled or not explored[p.y * world.SIZE_X + p.x]:
 		return
 	# Charted ground at placement time: count it as spotted land only.
@@ -1299,6 +1503,16 @@ func _try_spawn_wild_den() -> bool:
 	var p := _wild_den_site(kind_key)
 	if p.x < 0:
 		return false
+	# Hill folk do not resettle on a rival's doorstep: the seeded feud is a
+	# story beat, but endless respawn judder would keep the tinkers locked
+	# behind their walls forever. Keep new dens clear of enemy claims.
+	if kind_key == "kobold_den" or kind_key == "gnome_enclave":
+		var rival_kind := "gnome_enclave" if kind_key == "kobold_den" \
+				else "kobold_den"
+		var rival := _nearest_den_of_kind(rival_kind, p)
+		if rival.x >= 0 and Vector2(p).distance_to(Vector2(rival)) \
+				<= float(den_claim_radius + 1):
+			return false
 	_place_wild_den(kind_key, p)
 	wild_dens_spawned += 1
 	wild_respawn_rest_left = wild_den_rest + rng.randi_range(0, 300)
@@ -1317,6 +1531,17 @@ func _wild_dens_tick() -> void:
 			if int(den.regrow) >= prey_regrow_ticks:
 				den.regrow = 0
 				den.food = mini(int(den.food) + 1, PREY_FOOD_CAP)
+		elif DEN_KINDS[kind_key].role == "predator" and int(den.food) > 0:
+			# A pack eats: the larder drains between kills, so hunger (and
+			# therefore hunting) comes round on its own.
+			den.upkeep = int(den.get("upkeep", predator_upkeep_ticks)) - 1
+			if int(den.upkeep) <= 0:
+				den.upkeep = predator_upkeep_ticks
+				den.food = int(den.food) - 1
+		# Only larder-keeping kinds migrate or starve: traders, raiders and
+		# cursers live off their wits (and other people's purses).
+		if not ["prey", "predator", "thief"].has(DEN_KINDS[kind_key].role):
+			continue
 		if int(den.food) > 0:
 			den.unmet = 0
 			continue
@@ -1337,6 +1562,15 @@ func _migration_site(p: Vector2i, den: Dictionary) -> Vector2i:
 	# nowhere to go — they starve.
 	var kind_key: String = den.get("kind", "goblin_den")
 	var row: Dictionary = DEN_KINDS[kind_key]
+	if row.role == "thief":
+		# A hungry burrow follows the chickens: squat the hills above the
+		# nearest farm, or find fresh hills to skulk in.
+		var farm := _nearest_complete("farm", p)
+		if farm.x >= 0:
+			var near_farm := _mountain_edge_site(farm, 12, 3, 8)
+			if near_farm.x >= 0:
+				return near_farm
+		return _mountain_edge_site()
 	if row.role == "predator":
 		var prey := _nearest_prey_den(p, row.diet)
 		if prey.x >= 0:
@@ -1354,6 +1588,10 @@ func _migration_site(p: Vector2i, den: Dictionary) -> Vector2i:
 func _migrate_den(p: Vector2i, den: Dictionary, dest: Vector2i) -> void:
 	dens.erase(p)
 	dens[dest] = den
+	# A posted bounty follows the lair it was put on.
+	if bounties.has(p):
+		bounties[dest] = bounties[p]
+		bounties.erase(p)
 	den.unmet = 0
 	for a in agents:
 		if a.kind == "creature" and a.home == p:
@@ -1363,6 +1601,9 @@ func _migrate_den(p: Vector2i, den: Dictionary, dest: Vector2i) -> void:
 
 func _starve_den(p: Vector2i, den: Dictionary) -> void:
 	dens.erase(p)
+	# A lair that dies off on its own takes its posted flag with it.
+	bounties.erase(p)
+	_thaw_separated_feud()
 	dens_starved += 1
 	for a in agents:
 		if a.kind == "creature" and a.home == p and not _removals.has(a):
@@ -1480,14 +1721,328 @@ func _spawn_creature(species_name: String, den_pos: Vector2i) -> void:
 	a.home = den_pos
 	agents.append(a)
 
+# --- M6.2: factions — tension, the kobold–gnome feud, bandits, hags ---------
+
+func _init_tension() -> void:
+	# Normalize the hand-written content keys so every pair lands under the
+	# same sorted key no matter which side the content sheet listed first.
+	tension = {}
+	for k in FACTION_BASE_TENSION:
+		var parts: PackedStringArray = k.split("|")
+		if parts.size() != 2:
+			continue
+		tension[_pair_key(parts[0], parts[1])] = int(FACTION_BASE_TENSION[k])
+
+func _pair_key(a: String, b: String) -> String:
+	return (a + "|" + b) if a < b else (b + "|" + a)
+
+func tension_between(a: String, b: String) -> int:
+	return int(tension.get(_pair_key(a, b), 0))
+
+func shift_tension(a: String, b: String, delta: int) -> void:
+	# Events nudge the ledger; it never leaves the -3..+3 band.
+	if a == b or delta == 0:
+		return
+	var k := _pair_key(a, b)
+	tension[k] = clampi(int(tension.get(k, 0)) + delta, -3, 3)
+
+func _factions_tick() -> void:
+	# Grudges and friendships both fade toward indifference over time.
+	if tick % tension_decay_ticks == 0:
+		for k in tension:
+			var v := int(tension[k])
+			if v > 0:
+				tension[k] = v - 1
+			elif v < 0:
+				tension[k] = v + 1
+	_claim_friction_tick()
+	_kobold_tick()
+	_gnome_tick()
+	_bandit_tick()
+	_hag_tick()
+	_feud_tick()
+
+func _claim_friction_tick() -> void:
+	# Territory is the root of most quarrels: dens of different factions
+	# whose claims overlap sour their ledger, tick by tick.
+	_claim_left -= 1
+	if _claim_left > 0:
+		return
+	_claim_left = claim_friction_ticks
+	var tiles: Array = dens.keys()
+	for i in tiles.size():
+		var p: Vector2i = tiles[i]
+		var f1: String = DEN_KINDS[dens[p].get("kind", "goblin_den")].faction
+		if f1 == "wilders":
+			continue # beasts do not do politics
+		for j in range(i + 1, tiles.size()):
+			var q: Vector2i = tiles[j]
+			var f2: String = DEN_KINDS[dens[q].get("kind", "goblin_den")].faction
+			if f1 == f2 or f2 == "wilders":
+				continue
+			if Vector2(p).distance_squared_to(Vector2(q)) \
+					> den_claim_radius * den_claim_radius:
+				continue
+			shift_tension(f1, f2, -1)
+			claims_felt += 1
+
+func _kobold_tick() -> void:
+	# Kobolds filch chickens and shiny things: a burrow's larder grows at a
+	# farm's expense — or at a gnome enclave's, which is how the feud keeps
+	# its kindling.
+	for p in dens:
+		var den: Dictionary = dens[p]
+		if den.get("kind", "") != "kobold_den":
+			continue
+		den.theft_left = int(den.get("theft_left", kobold_theft_ticks)) - 1
+		if int(den.theft_left) > 0:
+			continue
+		den.theft_left = kobold_theft_ticks
+		var farm := _nearest_complete("farm", p)
+		var enclave := _nearest_den_of_kind("gnome_enclave", p)
+		# Only a burrow whose claim reaches the enclave can rob it: distant
+		# kobolds have no quarrel with the hills' far side.
+		var enclave_hot: bool = enclave.x >= 0 \
+			and Vector2(enclave).distance_squared_to(Vector2(p)) \
+				<= den_claim_radius * den_claim_radius
+		var steal_farm := farm.x >= 0 and not is_cursed(farm)
+		if enclave_hot and (not steal_farm or Vector2(enclave).distance_squared_to(Vector2(p))
+				< Vector2(farm).distance_squared_to(Vector2(p))):
+			# Tinker gold is shinier than chickens.
+			var gnomes: Dictionary = dens[enclave]
+			var purloined := mini(int(gnomes.gold), 2)
+			gnomes.gold = int(gnomes.gold) - purloined
+			den.food = int(den.food) + 1 + purloined
+			shift_tension("kobolds", "gnomes", -1)
+			kobold_thefts += 1
+			last_event = "Kobolds pilfer the gnome enclave's workshops!"
+		elif steal_farm:
+			den.food = int(den.food) + 1
+			kobold_thefts += 1
+			last_event = "Kobolds raid a farm for chickens and shiny things!"
+
+func _gnome_tick() -> void:
+	# Gnome tinkers trade gadgets for coin — until the feud with the kobolds
+	# makes the hills too dangerous to trade from.
+	for p in dens:
+		var den: Dictionary = dens[p]
+		if den.get("kind", "") != "gnome_enclave":
+			continue
+		den.trade_left = int(den.get("trade_left", gnome_trade_ticks)) - 1
+		if int(den.trade_left) > 0:
+			continue
+		den.trade_left = gnome_trade_ticks
+		if tension_between("gnomes", "kobolds") <= -2:
+			continue # the feud keeps the tinkers behind their walls
+		gold += gnome_trade_gold
+		den.gold = int(den.gold) + 0 # traded away, not hoarded
+		gnome_trades += 1
+		last_event = "Gnome tinkers trade their gadgets for coin"
+
+func _feud_tick() -> void:
+	# The designed pressure point: once the kobold–gnome ledger sours past
+	# the threshold, warbands fall on the enclave. Peace comes from
+	# separation (claims stop overlapping, tension drifts back) — or from
+	# the hero's sword.
+	_feud_left -= 1
+	if _feud_left > 0:
+		return
+	_feud_left = feud_ticks
+	if tension_between("kobolds", "gnomes") > -2:
+		return
+	for p in dens:
+		if dens[p].get("kind", "") != "kobold_den":
+			continue
+		var enclave := _nearest_den_of_kind("gnome_enclave", p)
+		if enclave.x < 0:
+			continue
+		# Warbands march only across contested hills, not the whole map.
+		if Vector2(enclave).distance_squared_to(Vector2(p)) \
+				> den_claim_radius * den_claim_radius:
+			continue
+		# Warbands take coin if there is any, otherwise they strip the
+		# enclave's larder. With nothing left worth taking, they stay home.
+		var gn: Dictionary = dens[enclave]
+		if int(gn.gold) > 0:
+			var spoils := mini(int(gn.gold), 4)
+			gn.gold = int(gn.gold) - spoils
+			dens[p].gold = int(dens[p].gold) + spoils
+		elif int(gn.food) > 0:
+			gn.food = int(gn.food) - 1
+			dens[p].food = int(dens[p].food) + 1
+		else:
+			continue
+		feuds_triggered += 1
+		last_event = "Kobold warbands fall on the gnome enclave!"
+		return
+
+func _feud_anchored() -> bool:
+	# The quarrel lives on overlapping claims: at least one burrow and
+	# enclave share the same hills.
+	for p in dens:
+		if dens[p].get("kind", "") != "kobold_den":
+			continue
+		var enclave := _nearest_den_of_kind("gnome_enclave", p)
+		if enclave.x >= 0 and Vector2(enclave).distance_squared_to(Vector2(p)) \
+				<= den_claim_radius * den_claim_radius:
+			return true
+	return false
+
+func _thaw_separated_feud() -> void:
+	# Once no burrow and enclave share territory (one side wiped out, or
+	# they drifted apart) the old grudge has nothing left to stoke it: the
+	# ledger clears, trade reopens and the warbands stop coming. A new
+	# burrow moving in later can sour it again.
+	if _feud_anchored():
+		return
+	var k := _pair_key("kobolds", "gnomes")
+	if int(tension.get(k, 0)) < 0:
+		tension[k] = 0
+
+func _nearest_den_of_kind(kind_key: String, from: Vector2i) -> Vector2i:
+	var best := Vector2i(-1, -1)
+	var best_d := INF
+	for p in dens:
+		if dens[p].get("kind", "") != kind_key:
+			continue
+		var d := Vector2(p).distance_squared_to(Vector2(from))
+		if d < best_d:
+			best_d = d
+			best = p
+	return best
+
+func _bandit_tick() -> void:
+	# Camps muster rough men; idle bandits look for fat purses near camp and
+	# shadow the collector (or a loaded hero) until they can lift the purse.
+	for p in dens:
+		var den: Dictionary = dens[p]
+		if den.get("kind", "") != "bandit_camp":
+			continue
+		den.next_muster = int(den.get("next_muster", bandit_muster_ticks)) - 1
+		if int(den.next_muster) > 0:
+			continue
+		den.next_muster = bandit_muster_ticks
+		var pop := 0
+		for a in agents:
+			if a.kind == "bandit" and a.home == p:
+				pop += 1
+		if pop < 2 + int(den.level):
+			_spawn_bandit(p)
+	for a in agents:
+		if a.kind != "bandit" or a.fighting:
+			continue
+		if a.purpose == AgentC.MUG:
+			var quarry = a.target_agent
+			if quarry == null or not agents.has(quarry) \
+					or int(quarry.pouch) <= 0:
+				a.target_agent = null
+				a.purpose = ""
+				a.state = AgentC.IDLE
+				a.path = []
+			elif not a.adjacent_to(quarry.tile()):
+				if quarry.tile() != a.target:
+					a.target = quarry.tile()
+					a.path = find_path(a.tile(), a.target)
+			continue
+		if a.state != AgentC.IDLE:
+			continue
+		# Wounded bandits lie low at camp and mend.
+		if a.adjacent_to(a.home) and a.hp < a.max_hp:
+			a.heal_cd -= 1
+			if a.heal_cd <= 0:
+				a.heal_cd = DEN_HEAL_TICKS
+				a.hp = mini(a.hp + 1, a.max_hp)
+		var victim = _pick_mug_victim(a)
+		if victim != null:
+			a.chase(victim)
+			a.purpose = AgentC.MUG
+			continue
+		a.assign(_wilds_spot(a.home, 5, a.tile()), AgentC.WANDER)
+		a.behavior_left = 30
+
+func _pick_mug_victim(bandit):
+	# Tax collectors first: soft targets with full purses. A hero on the
+	# road is a fallback — and one who may well turn the ambush around.
+	var best = null
+	var best_d := INF
+	var reach_sq: int = bandit_reach * bandit_reach
+	for a in agents:
+		if a.kind != "collector" or int(a.pouch) <= 0:
+			continue
+		var d := Vector2(a.tile()).distance_squared_to(Vector2(bandit.home))
+		if d > reach_sq or d >= best_d:
+			continue
+		best_d = d
+		best = a
+	if best != null:
+		return best
+	for a in agents:
+		if a.kind != "hero" or int(a.pouch) <= 0:
+			continue
+		var d := Vector2(a.tile()).distance_squared_to(Vector2(bandit.home))
+		if d > reach_sq or d >= best_d:
+			continue
+		best_d = d
+		best = a
+	return best
+
+func bandit_mug(b) -> void:
+	# The lift: a purse lightened on the road, carried home to the camp.
+	var victim = b.target_agent
+	var take := 0
+	if victim != null and agents.has(victim) and int(victim.pouch) > 0:
+		take = mini(int(victim.pouch), bandit_take)
+		victim.pouch -= take
+	b.target_agent = null
+	b.carrying = take
+	b.loot_kind = "gold"
+	if take > 0:
+		bandit_mugs += 1
+		last_event = "Bandits rob a purse on the road!"
+	b.state = AgentC.RETURNING
+	b.path = find_path(b.tile(), b.home)
+
+func _spawn_bandit(den_pos: Vector2i) -> void:
+	var a = AgentC.new()
+	a.setup(self, "bandit", den_pos)
+	a.home = den_pos
+	agents.append(a)
+	bandits_spawned += 1
+
+func _hag_tick() -> void:
+	# Hags do not raid; they wither the fields. A coven curses the nearest
+	# farm within reach on a slow clock — the curse halts its harvest until
+	# it wears off.
+	for p in dens:
+		var den: Dictionary = dens[p]
+		if den.get("kind", "") != "hag_coven":
+			continue
+		den.curse_left = int(den.get("curse_left", hag_curse_ticks)) - 1
+		if int(den.curse_left) > 0:
+			continue
+		den.curse_left = hag_curse_ticks
+		var farm := _nearest_complete("farm", p)
+		if farm.x < 0 or Vector2(farm).distance_to(Vector2(p)) > hag_reach:
+			continue
+		if is_cursed(farm):
+			continue
+		buildings[farm].cursed_until = tick + hag_curse_duration
+		curses_cast += 1
+		last_event = "A hag's curse withers the fields!"
+
+func is_cursed(p: Vector2i) -> bool:
+	var b: Dictionary = buildings.get(p, {})
+	return not b.is_empty() and int(b.get("cursed_until", 0)) > tick
+
 # --- M4: heroes & attraction ------------------------------------------------
 
 func post_bounty(den_pos: Vector2i) -> bool:
 	# The player's one-tap nudge: a flag with gold on it. Heroes weigh it
-	# against everything else and decide for themselves. Only hostile dens
-	# are bounty-able — wild beasts are not a den of evil.
-	if not is_hostile_den(den_pos):
-		last_event = "That lair is no den of evil"
+	# against everything else and decide for themselves. Any lair the realm
+	# is not the owner of can be flagged — goblin dens, wild warrens, bandit
+	# camps — but never the realm's own buildings.
+	if not dens.has(den_pos):
+		last_event = "There is no lair to post a bounty on"
 		return false
 	if gold < BOUNTY_FEE:
 		last_event = "Not enough gold for the bounty"
@@ -1500,7 +2055,7 @@ func post_bounty(den_pos: Vector2i) -> bool:
 	else:
 		bounties[den_pos] = {"reward": net}
 		bounties_posted += 1
-	last_event = "A bounty flag flies over the den!"
+	last_event = "A bounty flag flies over the lair!"
 	return true
 
 func _attraction_tick() -> void:
@@ -1808,6 +2363,67 @@ func _pick_hero_goal(h, scores: Dictionary) -> String:
 			return g
 	return "patrol"
 
+func _hero_aggro_tick() -> void:
+	# Heroes pick fights on their own initiative: any enemy they can see in
+	# the vicinity yanks them off patrols, leisure and errands. Only
+	# overriding needs hold them back — a fleeing hero is too hurt, an
+	# exhausted one must rest, and one inside a building (tavern, market)
+	# misses the alarm. Reflexive adjacency combat runs in _combat_step
+	# regardless, and a siege stays committed rather than chasing strays.
+	for a in agents:
+		if a.kind != "hero":
+			continue
+		if a.state == AgentC.FLEEING or a.fighting:
+			continue
+		if a.fatigue >= HERO_FATIGUE_MAX:
+			continue
+		if a.purpose == AgentC.REST or a.purpose == AgentC.SHOP:
+			continue
+		if a.purpose == AgentC.INTERCEPT or a.purpose == AgentC.ASSAULT:
+			continue
+		if a.hp <= maxi(1, int(ceil(a.max_hp / 3.0))):
+			continue
+		var foe = _nearest_visible_foe(a)
+		if foe == null:
+			continue
+		a.chase(foe)
+		a.goal = "fight"
+		a.decision_left = 0
+
+func _nearest_visible_foe(h):
+	var best = null
+	var best_d := INF
+	for e in agents:
+		if e.kind != "goblin" and e.kind != "bandit":
+			continue
+		if e.hp <= 0 or _removals.has(e):
+			continue
+		if not explored_at(e.tile()):
+			continue # no line of sight through the fog
+		var d: float = Vector2(h.tile()).distance_to(Vector2(e.tile()))
+		if d >= best_d or d > hero_alarm_radius:
+			continue
+		if d > hero_aggro_radius:
+			# Only an alarm — a foe at work on a building — carries this far.
+			if not _foe_raiding(e):
+				continue
+		best = e
+		best_d = d
+	# One path query for the chosen foe: a chase we cannot walk is no chase.
+	if best == null or find_path(h.tile(), best.tile()).is_empty():
+		return null
+	return best
+
+func _foe_raiding(e) -> bool:
+	# A raider at work, or any foe standing on a building's doorstep, is
+	# an alarm the whole neighborhood hears.
+	if e.purpose == AgentC.RAID:
+		return true
+	for b in buildings:
+		if e.adjacent_to(b):
+			return true
+	return false
+
 func _assign_heroes() -> void:
 	for a in agents:
 		if a.kind != "hero":
@@ -1936,17 +2552,18 @@ func hero_assault_tick(h) -> void:
 
 func adjacent_foes(a) -> int:
 	# Foes that make a fighter hold ground: guards and heroes hem goblins
-	# in; goblins hem heroes in.
+	# and bandits in; goblins and bandits hem heroes in.
 	var n := 0
 	for other in agents:
 		if other == a:
 			continue
-		if a.kind == "goblin":
+		if a.kind == "goblin" or a.kind == "bandit":
 			if (other.kind == "guard" or other.kind == "hero") \
 					and other.adjacent_to(a.tile()):
 				n += 1
 		elif a.kind == "hero":
-			if other.kind == "goblin" and other.adjacent_to(a.tile()):
+			if (other.kind == "goblin" or other.kind == "bandit") \
+					and other.adjacent_to(a.tile()):
 				n += 1
 	return n
 
@@ -1957,53 +2574,59 @@ func _combat_step() -> void:
 	var gobs := []
 	var guards := []
 	var heroes := []
+	var bands := []
 	for a in agents:
 		if a.kind == "goblin":
 			gobs.append(a)
+		elif a.kind == "bandit":
+			bands.append(a)
 		elif a.kind == "guard":
 			guards.append(a)
 		elif a.kind == "hero":
 			heroes.append(a)
-	for gob in gobs:
+	var hostiles: Array = gobs + bands
+	for foe in hostiles:
 		var attackers := 0
 		for g in guards:
-			if g.adjacent_to(gob.tile()):
+			if g.adjacent_to(foe.tile()):
 				attackers += 1
 		for h in heroes:
 			# A hero swings harder than rank alone: level + 1, so a fresh
 			# hero can actually carve through a small warband.
-			if h.adjacent_to(gob.tile()):
+			if h.adjacent_to(foe.tile()):
 				attackers += h.level + 1
 		if attackers > 0:
-			# Combat interrupts behavior: the goblin turns to defend itself.
-			gob.fighting = true
-			gob.behavior_left = 0
-			var wounded: bool = gob.hp > 0
-			gob.hurt(attackers)
-			if wounded and gob.hp <= 0:
+			# Combat interrupts behavior: the foe turns to defend itself.
+			foe.fighting = true
+			foe.behavior_left = 0
+			var wounded: bool = foe.hp > 0
+			foe.hurt(attackers)
+			if wounded and foe.hp <= 0:
 				# The kill is credited to the heroes who landed it.
 				for h in heroes:
-					if h.adjacent_to(gob.tile()):
+					if h.adjacent_to(foe.tile()):
 						_hero_gain_xp(h, 1)
 	for g in guards:
 		var enemies := 0
-		for gob in gobs:
-			if gob.adjacent_to(g.tile()):
+		for foe in hostiles:
+			if foe.adjacent_to(g.tile()):
 				enemies += 1
 		if enemies > 0:
 			g.hurt(enemies)
 	for h in heroes:
 		var enemies := 0
-		for gob in gobs:
-			if gob.adjacent_to(h.tile()):
+		for foe in hostiles:
+			if foe.adjacent_to(h.tile()):
 				enemies += 1
 		if enemies > 0:
 			h.fighting = true
 			h.hurt(enemies)
 	for p in dens.duplicate():
 		var den: Dictionary = dens[p]
-		if not is_hostile_den(p):
-			continue # wild lairs are nobody's siege target
+		# Hostile lairs are always siege targets; a bounty makes any other
+		# lair fair game for the realm's armed folk.
+		if not is_hostile_den(p) and not bounties.has(p):
+			continue
 		var besiegers := 0
 		for g in guards:
 			if g.adjacent_to(p):
@@ -2018,11 +2641,13 @@ func _combat_step() -> void:
 
 func _clear_den(p: Vector2i) -> void:
 	var den: Dictionary = dens[p]
+	var title: String = DEN_KINDS[den.get("kind", "goblin_den")].title
 	var spoils: int = int(den.gold)
 	dens.erase(p)
 	dens_cleared += 1
 	for a in agents:
-		if a.kind == "goblin" and a.home == p and not _removals.has(a):
+		if (a.kind == "goblin" or a.kind == "bandit" or a.kind == "creature") \
+				and a.home == p and not _removals.has(a):
 			_removals.append(a)
 	# The lair's plunder spills out where anyone quick can grab it.
 	if spoils > 0:
@@ -2032,6 +2657,7 @@ func _clear_den(p: Vector2i) -> void:
 	if bounties.has(p):
 		reward = int(bounties[p].reward)
 		bounties.erase(p)
+	_thaw_separated_feud()
 	var claimant = null
 	for a in agents:
 		if a.kind == "hero" and a.adjacent_to(p):
@@ -2043,27 +2669,34 @@ func _clear_den(p: Vector2i) -> void:
 		if reward > 0:
 			claimant.pouch += reward
 			bounties_paid += reward
-			last_event = "The %s clears the den and claims the bounty!" \
-				% HERO_CLASSES[claimant.hero_class].title
+			last_event = "The %s clears the %s and claims the bounty!" \
+				% [HERO_CLASSES[claimant.hero_class].title, title.to_lower()]
 		else:
-			last_event = "A %s storms the goblin den and prevails!" \
-				% HERO_CLASSES[claimant.hero_class].title
+			last_event = "A %s storms the %s and prevails!" \
+				% [HERO_CLASSES[claimant.hero_class].title, title.to_lower()]
 	elif reward > 0:
 		last_event = "The den fell to the watch; the bounty goes unclaimed"
 	else:
-		last_event = "The goblin den was cleared!"
+		last_event = "The %s was cleared!" % title.to_lower()
 
 func _reap() -> void:
 	var guard_fell := false
 	var fallen_hero_class := ""
 	for a in agents:
 		if a.hp <= 0 and (a.kind == "guard" or a.kind == "goblin" \
-				or a.kind == "hero") and not _removals.has(a):
+				or a.kind == "bandit" or a.kind == "hero") \
+				and not _removals.has(a):
 			_removals.append(a)
 			match a.kind:
 				"guard":
 					guards_fallen += 1
 					guard_fell = true
+				"bandit":
+					# A cut-down bandit spills what he lifted onto the road.
+					if int(a.carrying) > 0:
+						loot_piles[a.tile()] = int(loot_piles.get(a.tile(), 0)) \
+							+ int(a.carrying)
+						a.carrying = 0
 				"hero":
 					# A fallen hero drops their purse where anyone quick
 					# — a rogue, say — can race to it.

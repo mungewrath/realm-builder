@@ -323,8 +323,29 @@ func _draw_den(p: Vector2i, den: Dictionary) -> void:
 		_draw_warren(p)
 	elif kind_key == "wolf_den":
 		_draw_wolf_den(p)
-	else:
+	elif kind_key == "spider_den":
 		_draw_spider_den(p)
+	elif kind_key == "kobold_den":
+		_draw_kobold_den(p)
+	elif kind_key == "gnome_enclave":
+		_draw_gnome_enclave(p)
+	elif kind_key == "bandit_camp":
+		_draw_bandit_camp(p)
+	else:
+		_draw_hag_coven(p)
+	_draw_bounty_flag(p)
+
+func _draw_bounty_flag(p: Vector2i) -> void:
+	# A posted bounty flies a gold pennant on any lair, not just goblin dens.
+	if sim == null or sim.get("bounties") == null or not sim.bounties.has(p):
+		return
+	var origin := Vector2(p.x * TILE, p.y * TILE)
+	var pole := origin + Vector2(TILE - 10, TILE - 10)
+	draw_line(pole, pole + Vector2(0, -18), Color(0.2, 0.15, 0.1), 2.0)
+	var pennant := PackedVector2Array([
+		pole + Vector2(0, -18), pole + Vector2(12, -15), pole + Vector2(0, -11),
+	])
+	draw_colored_polygon(pennant, GOLD)
 
 func _draw_goblin_den(p: Vector2i, den: Dictionary) -> void:
 	# Cave mouth with a tattered red pennant; level pips show how bold it is.
@@ -340,14 +361,6 @@ func _draw_goblin_den(p: Vector2i, den: Dictionary) -> void:
 	draw_colored_polygon(pennant, Color(0.7, 0.15, 0.12))
 	for i in int(den.level):
 		draw_circle(mouth + Vector2(-9 + i * 7, -16), 2.2, GOLD)
-	# A posted bounty flies a gold pennant beside the den's ragged one.
-	if sim != null and sim.get("bounties") != null and sim.bounties.has(p):
-		var bpole := mouth + Vector2(-8, -4)
-		draw_line(bpole, bpole + Vector2(0, -16), Color(0.2, 0.15, 0.1), 2.0)
-		var bpennant := PackedVector2Array([
-			bpole + Vector2(0, -16), bpole + Vector2(11, -13), bpole + Vector2(0, -9),
-		])
-		draw_colored_polygon(bpennant, GOLD)
 
 func _draw_warren(p: Vector2i) -> void:
 	# A rabbit warren: a sandy mound with burrow holes.
@@ -375,6 +388,59 @@ func _draw_spider_den(p: Vector2i) -> void:
 		var a := n * PI / 4.0 + 0.3
 		draw_line(mouth, mouth + Vector2(cos(a), sin(a) * 0.7 - 0.5) * 13.0,
 			Color(0.85, 0.85, 0.9, 0.55), 1.2)
+
+func _draw_kobold_den(p: Vector2i) -> void:
+	# A burrow mouth ringed with stolen trinkets.
+	var origin := Vector2(p.x * TILE, p.y * TILE)
+	var mouth := Vector2(origin.x + TILE / 2.0, origin.y + TILE - 6)
+	draw_circle(mouth, 8.0, Color(0.4, 0.32, 0.18))
+	draw_circle(mouth + Vector2(0, 2), 5.5, Color(0.08, 0.06, 0.04))
+	draw_circle(mouth + Vector2(-9, 2), 1.8, Color(0.85, 0.7, 0.25))
+	draw_circle(mouth + Vector2(9, 3), 1.5, Color(0.7, 0.75, 0.8))
+	draw_line(mouth + Vector2(6, 5), mouth + Vector2(10, 1), Color(0.8, 0.78, 0.7), 1.2)
+
+func _draw_gnome_enclave(p: Vector2i) -> void:
+	# A round-doored hill workshop with a lantern and a little gear.
+	var origin := Vector2(p.x * TILE, p.y * TILE)
+	var hub := Vector2(origin.x + TILE / 2.0, origin.y + TILE - 8)
+	draw_circle(hub, 9.0, Color(0.42, 0.45, 0.34))
+	draw_circle(hub + Vector2(0, 2), 5.5, Color(0.25, 0.2, 0.14))
+	draw_circle(hub + Vector2(0, 3), 3.5, Color(0.55, 0.42, 0.24))
+	draw_circle(hub + Vector2(8, -5), 2.2, Color(0.95, 0.85, 0.45))
+	draw_circle(hub + Vector2(-8, -4), 3.0, Color(0.6, 0.62, 0.55))
+
+func _draw_bandit_camp(p: Vector2i) -> void:
+	# A tent and a cookfire by the road.
+	var origin := Vector2(p.x * TILE, p.y * TILE)
+	var tent := PackedVector2Array([
+		origin + Vector2(9, TILE - 6),
+		origin + Vector2(20, TILE - 6),
+		origin + Vector2(14.5, TILE - 18),
+	])
+	draw_colored_polygon(tent, Color(0.46, 0.32, 0.2))
+	draw_line(origin + Vector2(9, TILE - 6), origin + Vector2(20, TILE - 6),
+		Color(0.25, 0.18, 0.12), 1.5)
+	var fire := origin + Vector2(24, TILE - 8)
+	draw_circle(fire, 3.2, Color(0.9, 0.45, 0.15))
+	draw_circle(fire, 1.6, Color(0.98, 0.85, 0.35))
+
+func _draw_hag_coven(p: Vector2i) -> void:
+	# A crooked hut with a smoking chimney and a hanging charm.
+	var origin := Vector2(p.x * TILE, p.y * TILE)
+	var hut := Rect2(origin + Vector2(8, TILE - 20), Vector2(16, 14))
+	draw_rect(hut, Color(0.28, 0.22, 0.26))
+	var roof := PackedVector2Array([
+		origin + Vector2(5, TILE - 19),
+		origin + Vector2(27, TILE - 19),
+		origin + Vector2(19, TILE - 27),
+	])
+	draw_colored_polygon(roof, Color(0.2, 0.16, 0.2))
+	draw_rect(Rect2(origin + Vector2(20, TILE - 26), Vector2(4, 6)),
+		Color(0.18, 0.15, 0.17))
+	draw_circle(origin + Vector2(24, TILE - 27), 2.0, Color(0.55, 0.55, 0.5))
+	draw_line(origin + Vector2(9, TILE - 20), origin + Vector2(9, TILE - 14),
+		Color(0.7, 0.6, 0.3), 1.4)
+	draw_circle(origin + Vector2(9, TILE - 13), 1.6, Color(0.75, 0.65, 0.3))
 
 func _draw_loot_pile(p: Vector2i) -> void:
 	# A spilled purse: a little heap of coins on the ground.
@@ -407,7 +473,7 @@ func _draw_agents() -> void:
 		# Goblins and wild creatures only show when someone from the realm
 		# can actually see them; the realm's own folk are always drawn
 		# (heroes are the explorers lighting the way).
-		if (a.kind == "goblin" or a.kind == "creature") \
+		if (a.kind == "goblin" or a.kind == "creature" or a.kind == "bandit") \
 				and _fog_level(a.tile()) < 2:
 			continue
 		var c: Vector2 = a.pos * float(TILE)
@@ -417,7 +483,10 @@ func _draw_agents() -> void:
 				if a.pouch > 0:
 					draw_circle(c + Vector2(5.0, -5.0), 2.5, Color(0.92, 0.78, 0.2))
 			"goblin":
-				draw_circle(c, 4.5, Color(0.3, 0.55, 0.2))
+				# Sickly lime with a dark rim: readable against both open
+				# grass and forest shade, where a plain grass-green vanished.
+				draw_circle(c, 5.6, Color(0.12, 0.14, 0.07))
+				draw_circle(c, 4.5, Color(0.64, 0.76, 0.28))
 				draw_circle(c + Vector2(1.5, -1.0), 1.0, Color(0.9, 0.2, 0.1))
 				draw_circle(c + Vector2(-1.5, -1.0), 1.0, Color(0.9, 0.2, 0.1))
 				if a.carrying > 0:
@@ -425,6 +494,15 @@ func _draw_agents() -> void:
 					var loot_col := Color(0.5, 0.7, 0.3) if a.purpose == "forage" \
 						else Color(0.92, 0.78, 0.2)
 					draw_circle(c + Vector2(5.0, -4.0), 2.5, loot_col)
+			"bandit":
+				# A rough brown figure with a dark bandana and a coin if he
+				# has lifted one.
+				draw_circle(c, 5.4, Color(0.2, 0.12, 0.1))
+				draw_circle(c, 4.3, Color(0.56, 0.36, 0.22))
+				draw_line(c + Vector2(-3.5, -2.0), c + Vector2(3.5, -2.0),
+					Color(0.15, 0.1, 0.08), 2.0)
+				if a.carrying > 0:
+					draw_circle(c + Vector2(5.0, -4.0), 2.5, Color(0.92, 0.78, 0.2))
 			"guard":
 				draw_circle(c, 4.5, Color(0.45, 0.55, 0.7))
 				draw_line(c + Vector2(3, 2), c + Vector2(-3, -6), Color(0.85, 0.85, 0.9), 1.5)

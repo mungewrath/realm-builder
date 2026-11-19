@@ -73,7 +73,7 @@ func _draw() -> void:
 			draw_rect(Rect2(Vector2(p) * PX, Vector2(PX, PX)),
 				Color(0.7, 0.15, 0.12) if hostile else Color(0.5, 0.4, 0.24))
 	for a in sim.agents:
-		if a.kind == "goblin" or a.kind == "creature":
+		if a.kind == "goblin" or a.kind == "creature" or a.kind == "bandit":
 			continue
 		if a.kind == "peasant":
 			continue # too many dots; the realm folk live where you can see

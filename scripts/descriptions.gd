@@ -45,6 +45,22 @@ const DEN_INFO := {
 		"title": "Giant Spider Nest",
 		"blurb": "A cave mouth veiled in web. The great spider snares goblins for supper; some folk quietly cheer for it.",
 	},
+	"kobold_den": {
+		"title": "Kobold Burrow",
+		"blurb": "A yapping burrow in the hills. Kobolds filch chickens and trinkets — and they have hated the gnomes for longer than anyone remembers.",
+	},
+	"gnome_enclave": {
+		"title": "Gnome Enclave",
+		"blurb": "A warren of workshops under a hill shoulder. Gnome tinkers trade clever little things for coin — when the hills are peaceful enough to trade at all.",
+	},
+	"bandit_camp": {
+		"title": "Bandit Camp",
+		"blurb": "A ring of tents and a cookfire by the road. Rough men muster here and rob fat purses; storm it and the road grows quieter.",
+	},
+	"hag_coven": {
+		"title": "Hag Coven",
+		"blurb": "A crooked hut in the deep woods, hung with bones and drying herbs. The hags do not raid — they curse the fields and laugh.",
+	},
 }
 
 const HERO_TITLES := {
@@ -67,6 +83,7 @@ const UNIT_ROLES := {
 	"rabbit": "Rabbit",
 	"wolf": "Grey Wolf",
 	"spider": "Giant Spider",
+	"bandit": "Bandit",
 }
 
 static func building_title(kind: String) -> String:
@@ -107,14 +124,33 @@ static func den_status(den: Dictionary, p: Vector2i = Vector2i(-1, -1), sim = nu
 	# Wild lairs speak of their larder; goblin dens of their next move.
 	var kind: String = den.get("kind", "goblin_den")
 	if kind != "goblin_den":
-		var s := ""
+		match kind:
+			"kobold_den":
+				var s := "A yapping, cluttered burrow; the kobolds hoard whatever they can lift."
+				if sim != null and sim.tension_between("kobolds", "gnomes") <= -2:
+					s += " The feud with the gnomes is at a boil."
+				return s
+			"gnome_enclave":
+				var s := "Little workshops steam and clank; tinker goods wait on the trade."
+				if sim != null:
+					if sim.tension_between("gnomes", "kobolds") <= -2:
+						s = "The gates are barred: the kobold feud has choked off trade."
+					elif int(den.get("gold", 0)) > 0:
+						s += " Their coffers hold %d gold." % int(den.get("gold", 0))
+				return s
+			"bandit_camp":
+				return "Cookfires and dice. %d gold sits in the strongbox, not all of it honestly come by." \
+					% int(den.get("gold", 0))
+			"hag_coven":
+				return "Bones and drying herbs. The hags mutter over their curses and pay no heed to soldiers."
+		var status := ""
 		if int(den.get("food", 0)) <= 0:
-			s = "The larder is empty; the den grows desperate."
+			status = "The larder is empty; the den grows desperate."
 		elif int(den.get("food", 0)) < 3:
-			s = "Lean pickings of late; hungry eyes scan the horizon."
+			status = "Lean pickings of late; hungry eyes scan the horizon."
 		else:
-			s = "The den is well fed and the wilds are quiet."
-		return s
+			status = "The den is well fed and the wilds are quiet."
+		return status
 	# The den's current mood colors what a visitor would see.
 	var s := ""
 	match den.get("intent", ""):
@@ -145,7 +181,10 @@ static func building_status(kind: String, p: Vector2i, b: Dictionary, sim) -> St
 		"house":
 			return _purse(int(b.tax))
 		"farm":
-			var s := _farm_status(p, sim)
+			var s := ""
+			if sim != null and sim.is_cursed(p):
+				s = "A hag's curse lies on these fields: the crops wither and no farmer will work them. "
+			s += _farm_status(p, sim)
 			if int(b.tax) > 0:
 				s += " The tithe purse holds a few coins, waiting on the collector."
 			return s
@@ -286,11 +325,37 @@ static func _hero_home_name(a) -> String:
 		_:
 			return "keep"
 
+static func _den_label(a) -> String:
+	# Name the lair the agent is actually assaulting (wild lairs included),
+	# falling back to the doorstep/target tile when the den has moved on.
+	var k = a.kingdom
+	if k == null:
+		return "den"
+	var p: Vector2i = a.quest_den
+	var found: bool = p != Vector2i.ZERO and k.dens.has(p)
+	if not found and k.dens.has(a.target):
+		p = a.target
+		found = true
+	if not found:
+		for d in k.dens:
+			if a.adjacent_to(d):
+				p = d
+				found = true
+				break
+	if not found:
+		return "den"
+	var kind: String = k.dens[p].get("kind", "goblin_den")
+	if not k.DEN_KINDS.has(kind):
+		return "den"
+	return String(k.DEN_KINDS[kind].title).to_lower()
+
 static func agent_activity(a) -> String:
 	if a.state == "fleeing":
 		match a.kind:
 			"goblin":
 				return "slinking home to the den"
+			"bandit":
+				return "running back to camp!"
 			"guard":
 				return "retreating to dress wounds"
 			"hero":
@@ -343,7 +408,7 @@ static func agent_activity(a) -> String:
 						"assist":
 							return "hammering alongside the builders"
 						"assault":
-							return "storming the goblin den"
+							return "storming the %s" % _den_label(a)
 						"pray":
 							return "kneeling in quiet prayer"
 						"carouse":
@@ -396,6 +461,30 @@ static func agent_activity(a) -> String:
 					return "putting a building to the torch"
 				"returning":
 					return "slinking home to the den"
+		"bandit":
+			if a.fighting:
+				return "brawling with the watch!"
+			if a.carrying > 0:
+				return "making off with a lifted purse"
+			match a.state:
+				"idle":
+					if a.adjacent_to(a.home):
+						return "dicing by the campfire"
+					match a.behavior:
+						"wander":
+							return "loitering by the road"
+						_:
+							return "skulking near camp"
+				"to_target":
+					if a.purpose == "mug":
+						return "shadowing a fat purse"
+					return "prowling the road"
+				"acting":
+					if a.purpose == "mug":
+						return "lifting a purse!"
+					return "watching the road"
+				"returning":
+					return "slipping back to camp with the take"
 		"guard":
 			match a.state:
 				"idle":
@@ -411,13 +500,13 @@ static func agent_activity(a) -> String:
 						"intercept":
 							return "rushing to drive off raiders"
 						"assault":
-							return "storming the goblin den"
+							return "storming the %s" % _den_label(a)
 						_:
 							return "walking the watch round"
 				"acting":
 					match a.purpose:
 						"assault":
-							return "hammering at the den's mouth"
+							return "hammering at the %s's door" % _den_label(a)
 						_:
 							return "scanning the horizon"
 				"returning":

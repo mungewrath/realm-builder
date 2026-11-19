@@ -150,6 +150,12 @@ Two small player-facing tweaks pulled out of band:
   on kills and den clears (+2 max hp), and can die — dropping their purse
   as a loot pile that treasure-loving heroes (rogues) race to. Fleeing
   heroes break off at 1 hp and heal at the tavern.
+- Heroes pick fights, not just take them: a visible enemy within 6 tiles
+  (or 12 when it is a raider or standing at a building's door) pulls them
+  off patrols, leisure and errands into a chase. Overriding needs win
+  instead: fleeing, exhaustion, low health, or being indoors (tavern
+  rest, market shopping) keep a hero from answering; a siege in progress
+  stays committed. Fog still gates what they can see.
 - Dens cleared by heroes credit xp, pay standing bounties, and leave a
   loot pile.
 - Escorting tax rounds: deferred (M7 content pass) — construction assist
@@ -294,16 +300,19 @@ stack on top of it. Split into staged chunks, each testable headless.
 - Wild creatures are agents with per-species behavior rolls (graze /
   lurk / wander / hunt). They never fight the realm in this chunk —
   wilder territoriality lands later.
-- Realm gating: heroes smite and bounties only target *hostile* dens;
-  you cannot build on a wild den tile; fog discovery events, inspector
-  text, map view and minimap are kind-aware.
+- Realm gating: heroes smite only *hostile* dens by nature, but a posted
+  bounty can flag **any lair** outside the realm's own walls (goblin den,
+  rabbit warren, bandit camp...) — the flag makes it a siege target for
+  the realm's armed folk. You cannot build on a wild den tile; fog
+  discovery events, inspector text, map view and minimap are kind-aware.
 - Hero leisure (tuned after playtesting): hunting (rogues love it,
   fresh legs only — it yields to bounties and peters out before the
   warren runs dry), prayer at the shrine (weary paladins), and tavern
   evenings that drop a coin in the till.
 - Decisions are a weighted draw, not a locked ranking: overriding
   priorities are safety (an exhausted hero always turns in) and
-  self-defense (reflexive fighting sits outside goal choice);
+  self-defense (nearby foes pull heroes into a chase outside goal
+  choice; adjacent fighting is reflexive);
   everything else squares its incentive score into a weight and rolls,
   so favored pursuits usually win but anything on the table keeps a
   chance. Pull scales with the stakes: a bounty's reward does the
@@ -312,7 +321,11 @@ stack on top of it. Split into staged chunks, each testable headless.
   the purse (a broke rogue drinks ~30% of draws, a 30g one ~80% — the
   market still outranks it while the purse is worth banking). A round
   of hunt or carouse halves its own score for ~60 ticks (quarter
-  weight) — rotation comes from the odds, not gates.
+  weight) — rotation comes from the odds, not gates. Rogues were still
+  a touch hunt-happy, so their hunt weight is 4 (hunt ~53% of idle
+  draws beside a tavern and a warren, down from ~60%). Leisure is not
+  snapped off in a tick: tavern evenings run 8 ticks, prayer 6, a spot
+  of hunting 4; errands (shop, loot, assist) stay quick.
   `_best_hero_goal` remains the deterministic "favored pursuit" query
   for tests/UI.
 - Tests: `tests/ecology_test.gd` (seeded lairs, prey regrowth, hunt
@@ -321,11 +334,69 @@ stack on top of it. Split into staged chunks, each testable headless.
 - Deferred to the next chunks: faction tension matrix (lands with the
   factions that act on it).
 
-## M6.2 — Factions 2-3: kobolds, gnomes, bandits, hags
+## M6.2 — Factions 2-3: kobolds, gnomes, bandits, hags (built, awaiting playtest)
 
-- Kobold–gnome feud events; bandits ambush caravans and rob heroes;
-  hags curse farms. Faction tension matrix from `content-design.md` with
-  event shifts and drift toward 0.
+- Four new `DEN_KINDS` rows: `kobold_den` (kobolds, neutral, hill thief
+  role), `gnome_enclave` (gnomes, neutral, hill trader), `bandit_camp`
+  (hostile, road raider — musters bandit agents), `hag_coven` (hostile,
+  forest curser — no agents, curses instead). Titles, blurbs, status
+  lines, map art, minimap hostility and inspector rows are kind-aware;
+  wild dens now include the hills (`mountain_edge` sites), and
+  `_den_respawn_tick` counts only goblin dens so the other factions do
+  not crowd the goblin cap.
+- Faction tension ledger `tension` (`"a|b"` sorted keys, content rows
+  normalized at init): the `content-design.md` §4.3 matrix seeds it at
+  -3..+3, events shift it clamped, and it drifts one step toward 0 every
+  `tension_decay_ticks` (500). Territory is the root quarrel: dens of
+  different factions whose claims (radius 6) overlap sour their ledger
+  every `claim_friction_ticks` (120) — beasts don't do politics.
+- The kobold–gnome feud is the designed pressure point: the seed squats
+  the closest pair of hill shoulders so claims overlap from day one.
+  The quarrel needs that shared ground: friction sours the ledger while
+  claims overlap, kobolds only rob an enclave their claim reaches, and
+  warbands march only across contested hills. Clearing either side (or
+  territory separation) thaws the ledger to 0 at once — trade reopens
+  and strikes stop — and respawned burrows keep clear of a rival's
+  claim, so the lock cannot silently reassert itself. Kobolds still
+  steal from the nearest farm every 150 ticks (or the enclave, when in
+  reach); gnome tinkers trickle a coin into the realm every 200 ticks
+  *unless* the feud is at a boil (≤ -2). At ≤ -2 warbands strike the
+  enclave for coin, else its larder (and stay home when there is
+  nothing worth taking).
+- Bandits: a camp musters a rider every 300 ticks up to 2 + level,
+  seeded near the frontier so the roads bite early; idle bandits hunt
+  for laden purses within reach (collectors first, heroes as fallback),
+  shadow the mark, lift at most `bandit_take` (10), flee home with it,
+  heal at camp, and bank the take in the camp strongbox. Bandits join
+  combat both ways: guards and heroes cut them down, they beat on
+  guards/heroes, and a killed bandit spills his takings on the road.
+- Hags: covens curse the nearest complete farm within 20 tiles every
+  300 ticks (`cursed_until`, 300-tick duration). A cursed farm accepts
+  no new farmers, delivers no harvest (`FARM_CARRY` becomes 0), and
+  says so in the inspector; the curse wears off on its own.
+- Seeding/balance: the starting wilds hold the warren/wolf pair, the
+  feuding hillfolk, a road bandit camp and a hag coven near the settled
+  woods; `wild_dens_max` rises to 8 so spawns still happen. Predator
+  larders now drain (`predator_upkeep_ticks` 200) so wolves regularly
+  get hungry and hunt — M6.1's wolf/warren chain actually runs.
+- UI: a bottom-left **Log** toggle opens a compact event-log card (not a
+  full-screen takeover) with the whole scrollback, tick-stamped and
+  auto-scrolling; it rebuilds from `sim.event_log` on open and appends
+  incrementally by monotonic id, so rotated entries never duplicate.
+  The sim keeps the log itself (the `last_event` setter records every
+  announcement into a 300-entry ring), which also makes events testable
+  headlessly.
+- Bounties are no longer hostile-only: inspecting any lair (wild warrens,
+  wolf dens, kobold burrows, gnome enclaves, camps, covens) offers the
+  bounty button; the gold pennant draws over every lair kind, a migrating
+  lair carries its flag along, a lair that dies off drops it, and a
+  cleared wild lair now takes its creatures with it.
+- Tests: `tests/factions_test.gd` (ledger seed/symmetry/drift, claim
+  friction, kobold theft, trade on/off, feud threshold, bandit muster +
+  mug with exact purse accounting, hag curse landing/blocking
+  farms/expiry, cursed harvest carry, three-year soak). Ecology suite
+  updated for hill dens and hostile wild lairs; sim suite covers the
+  event-log ring (recording, monotonic ids, cap).
 
 ## M6.3 — Terrain actions & druid reaction
 

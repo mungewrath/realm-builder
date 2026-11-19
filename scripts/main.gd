@@ -26,6 +26,12 @@ var speed_label: Label
 var fog_check: CheckButton
 var minimap: Control
 
+# Event log scrollback (bottom-left): a compact panel fed by sim.event_log.
+var log_button: Button
+var log_panel: PanelContainer
+var log_text: RichTextLabel
+var log_last_id := 0
+
 @onready var map_view := %MapView
 @onready var res_label: Label = %ResLabel
 @onready var pop_label: Label = %PopLabel
@@ -52,8 +58,10 @@ func _ready() -> void:
 	shrine_button.pressed.connect(_on_shrine_pressed)
 	_build_minimap()
 	_build_inspect_panel()
+	_build_event_log()
 	_build_speed_panel()
 	get_viewport().size_changed.connect(_layout_inspect_panel)
+	get_viewport().size_changed.connect(_layout_event_log)
 	tick_timer = Timer.new()
 	tick_timer.wait_time = 1.0 / sim_speed
 	tick_timer.timeout.connect(_on_tick)
@@ -104,6 +112,7 @@ func _refresh() -> void:
 		sim.gold, mini(sim.fed_capacity(), sim.pop), sim.pop, sim.farms]
 	pop_label.text = "People %d / %d  |  Houses %d" % [sim.pop, sim.pop_cap, sim.houses]
 	event_label.text = sim.last_event if sim.last_event != "" else "Drag to explore, pinch to zoom"
+	_refresh_event_log()
 	farm_button.set_pressed_no_signal(build_mode == "farm")
 	house_button.set_pressed_no_signal(build_mode == "house")
 	guard_button.set_pressed_no_signal(build_mode == "guardhouse")
@@ -233,9 +242,10 @@ func _fill_tile_inspect(b, den, pile_gold: int) -> void:
 		inspect_status.text = Descriptions.loot_status(pile_gold)
 
 func _refresh_action(p: Vector2i, den) -> void:
-	# One-tap bounty flags live on the den's inspector card — hostile dens
-	# only; wild lairs are not a den of evil.
-	if den == null or not dens_reachable(p) or not sim.is_hostile_den(p):
+	# One-tap bounty flags live on the lair's inspector card. Any lair works
+	# (goblin den, wild warren, bandit camp) — the realm's own buildings are
+	# not bounty-able.
+	if den == null or not dens_reachable(p):
 		inspect_action.visible = false
 		return
 	if sim.bounties.has(p):
@@ -312,6 +322,113 @@ func _close_inspect() -> void:
 	map_view.selected = Vector2i(-1, -1)
 	inspect_action.visible = false
 	map_view.queue_redraw()
+
+# --- Event log (bottom-left) ---------------------------------------------
+
+func _build_event_log() -> void:
+	# The toggle sits above the build bar; the panel is a compact card, not
+	# a full-screen takeover — the map stays visible behind it.
+	log_button = Button.new()
+	log_button.name = "LogButton"
+	log_button.text = "Log"
+	log_button.toggle_mode = true
+	log_button.custom_minimum_size = Vector2(110, 56)
+	log_button.add_theme_font_size_override("font_size", 22)
+	log_button.pressed.connect(_toggle_event_log)
+	get_node("UI/Root").add_child(log_button)
+	log_button.anchor_left = 0.0
+	log_button.anchor_right = 0.0
+	log_button.anchor_top = 1.0
+	log_button.anchor_bottom = 1.0
+	log_button.offset_left = 16.0
+	log_button.offset_right = 126.0
+	log_button.offset_top = -272.0
+	log_button.offset_bottom = -216.0
+
+	log_panel = PanelContainer.new()
+	log_panel.name = "LogPanel"
+	log_panel.visible = false
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 6)
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 12)
+	var title := Label.new()
+	title.text = "Event Log"
+	title.add_theme_font_size_override("font_size", 26)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var close := Button.new()
+	close.text = "X"
+	close.add_theme_font_size_override("font_size", 22)
+	close.pressed.connect(_close_event_log)
+	top.add_child(title)
+	top.add_child(close)
+	log_text = RichTextLabel.new()
+	log_text.bbcode_enabled = true
+	log_text.scroll_active = true
+	log_text.scroll_following = true
+	log_text.selection_enabled = true
+	log_text.add_theme_font_size_override("normal_font_size", 18)
+	log_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	vb.add_child(top)
+	vb.add_child(log_text)
+	log_panel.add_child(vb)
+	get_node("UI/Root").add_child(log_panel)
+	_layout_event_log()
+
+func _layout_event_log() -> void:
+	if log_panel == null:
+		return
+	var vp := get_viewport_rect().size
+	var w := minf(460.0, vp.x - 32.0)
+	var h := minf(340.0, maxf(140.0, vp.y - 296.0))
+	log_panel.anchor_left = 0.0
+	log_panel.anchor_right = 0.0
+	log_panel.anchor_top = 1.0
+	log_panel.anchor_bottom = 1.0
+	log_panel.offset_left = 16.0
+	log_panel.offset_right = 16.0 + w
+	log_panel.offset_bottom = -284.0
+	log_panel.offset_top = -284.0 - h
+	log_text.custom_minimum_size = Vector2(0, h - 64.0)
+
+func _toggle_event_log() -> void:
+	if log_panel.visible:
+		_close_event_log()
+		return
+	log_panel.visible = true
+	log_button.set_pressed_no_signal(true)
+	_rebuild_event_log()
+
+func _close_event_log() -> void:
+	if log_panel == null:
+		return
+	log_panel.visible = false
+	log_button.set_pressed_no_signal(false)
+
+func _rebuild_event_log() -> void:
+	# Open fresh from the sim's scrollback (old entries may already have
+	# rotated out of the ring while the panel was shut).
+	log_text.clear()
+	log_last_id = 0
+	if sim.event_log.is_empty():
+		log_text.append_text("[color=#8f8f8f]Nothing has happened yet.[/color]")
+	else:
+		_refresh_event_log()
+
+func _refresh_event_log() -> void:
+	if log_panel == null or not log_panel.visible:
+		return
+	# First real entry after an empty open replaces the placeholder line.
+	if log_last_id == 0 and not sim.event_log.is_empty():
+		log_text.clear()
+	# Entries carry monotonic ids, so appending is cheap and stays correct
+	# when the ring buffer drops old messages.
+	for e in sim.event_log:
+		if int(e.id) <= log_last_id:
+			continue
+		log_text.append_text("[color=#8f8f8f]%d[/color]  %s\n" % [int(e.tick), e.text])
+		log_last_id = int(e.id)
 
 # --- Dev tools: sim speed (1-3x), fog of war toggle --------------------------
 
