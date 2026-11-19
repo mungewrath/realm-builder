@@ -2,9 +2,16 @@ const GRASS := 0
 const FOREST := 1
 const WATER := 2
 const MOUNTAIN := 3
+const SWAMP := 4
 
 const SIZE_X := 48
 const SIZE_Y := 32
+
+# Each type should end up near a third of the open land.
+const FOREST_BLOBS := 9
+const FOREST_BLOB_SIZE := 48
+const SWAMP_BLOBS := 9
+const SWAMP_BLOB_SIZE := 48
 
 const DIRS_ALL := [
 	Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
@@ -24,20 +31,71 @@ func generate(seed_value: int) -> void:
 			var inner := x == 1 or y == 1 or x == SIZE_X - 2 or y == SIZE_Y - 2
 			if border or (inner and rng.randf() < 0.5):
 				set_terrain(Vector2i(x, y), MOUNTAIN)
-	for i in 4:
-		var center := Vector2i(rng.randi_range(3, SIZE_X - 4), rng.randi_range(3, SIZE_Y - 5))
-		for j in 10:
-			var p := center + Vector2i(rng.randi_range(-2, 2), rng.randi_range(-2, 2))
-			if get_terrain(p) == GRASS:
-				set_terrain(p, FOREST)
 	var lake := Vector2i(rng.randi_range(4, SIZE_X - 5), rng.randi_range(4, SIZE_Y - 5))
 	for j in 8:
 		var p := lake + Vector2i(rng.randi_range(-1, 1), rng.randi_range(-1, 1))
 		if get_terrain(p) == GRASS:
 			set_terrain(p, WATER)
+	# Woods and marshes each claim roughly a third of the open land, so
+	# clearing ground is a standing tradeoff rather than a rare luxury.
+	# Seeds are chosen first, then the blobs grow together so neither type
+	# can crowd the other out.
+	var blobs: Array = []
+	_seed_blobs(blobs, FOREST, FOREST_BLOBS, FOREST_BLOB_SIZE)
+	_seed_blobs(blobs, SWAMP, SWAMP_BLOBS, SWAMP_BLOB_SIZE)
+	_grow_blobs(blobs)
 	for x in range(SIZE_X / 2 - 2, SIZE_X / 2 + 3):
 		for y in range(SIZE_Y / 2 - 2, SIZE_Y / 2 + 3):
 			set_terrain(Vector2i(x, y), GRASS)
+
+func _seed_blobs(blobs: Array, terrain: int, count: int, size: int) -> void:
+	var centers: Array = []
+	for i in count:
+		var c := Vector2i(-1, -1)
+		for attempt in 80:
+			var p := Vector2i(rng.randi_range(3, SIZE_X - 4), rng.randi_range(3, SIZE_Y - 4))
+			if get_terrain(p) != GRASS:
+				continue
+			var clear := true
+			for q in centers:
+				if Vector2(p).distance_to(Vector2(q)) < 5.0:
+					clear = false
+					break
+			if clear:
+				c = p
+				break
+		if c.x < 0:
+			continue
+		centers.append(c)
+		set_terrain(c, terrain)
+		blobs.append({"terrain": terrain, "size": size, "center": c, "cells": [c]})
+
+func _grow_blobs(blobs: Array) -> void:
+	# Eden-style growth: expand each blob from its own frontier, one cell
+	# per blob per round, so the three terrains end up in roughly equal
+	# shares. Radius keeps each wood/marsh a region rather than a stain.
+	var max_rounds := 0
+	for b in blobs:
+		max_rounds = maxi(max_rounds, int(b.size) * 8)
+	for round in max_rounds:
+		var progress := false
+		for b in blobs:
+			if b.cells.size() >= int(b.size):
+				continue
+			for attempt in 16:
+				var base: Vector2i = b.cells[rng.randi_range(0, b.cells.size() - 1)]
+				var d: Vector2i = DIRS_ALL[rng.randi_range(0, DIRS_ALL.size() - 1)]
+				var p := base + d
+				if not in_bounds(p) or get_terrain(p) != GRASS:
+					continue
+				if Vector2(p).distance_to(Vector2(b.center)) > 10.0:
+					continue
+				set_terrain(p, int(b.terrain))
+				b.cells.append(p)
+				progress = true
+				break
+		if not progress:
+			break
 
 func get_terrain(p: Vector2i) -> int:
 	if not in_bounds(p):
@@ -56,7 +114,7 @@ func is_buildable(p: Vector2i) -> bool:
 
 func _walkable(p: Vector2i) -> bool:
 	var t := get_terrain(p)
-	return t == GRASS or t == FOREST
+	return t == GRASS or t == FOREST or t == SWAMP
 
 func find_path(from: Vector2i, to: Vector2i) -> Array:
 	# BFS on walkable tiles (8-directional so routes cut diagonally instead

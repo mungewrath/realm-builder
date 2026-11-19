@@ -50,6 +50,11 @@ const MUG := "mug"
 # M5: hero exploration leg — chart the unknown when nothing is known.
 const EXPLORE := "explore"
 
+# M6.3: the druid's leg — tend a wild lair and its larder.
+const PROTECT := "protect"
+# M6.3: labour on a terrain worksite (drain marsh / clear woods).
+const TERRAIN := "terrain"
+
 var kind := "peasant"
 var pos := Vector2.ZERO
 var state := IDLE
@@ -202,7 +207,7 @@ func _arrived() -> void:
 				FARM:
 					state = ACTING
 					work_left = kingdom.FARM_WORK_TICKS
-				BUILD, COLLECT:
+				BUILD, COLLECT, TERRAIN:
 					state = ACTING
 					work_left = 1
 				RAID:
@@ -220,6 +225,10 @@ func _arrived() -> void:
 					# predator's pounce is over in one bound.
 					state = ACTING
 					work_left = kingdom.HERO_HUNT_TICKS if kind == "hero" else 1
+				PROTECT:
+					# A druid settles in to tend the wilds.
+					state = ACTING
+					work_left = kingdom.HERO_PROTECT_TICKS
 				PATROL:
 					state = ACTING
 					work_left = kingdom.GUARD_PATROL_WAIT
@@ -295,6 +304,16 @@ func _finish_work() -> void:
 				purpose = ""
 			else:
 				work_left = 1
+		TERRAIN:
+			# Land work persists at the tile until the last labour tick.
+			if not kingdom.terrain_works.has(target):
+				state = IDLE
+				purpose = ""
+			elif kingdom.tick_terrain(target):
+				state = IDLE
+				purpose = ""
+			else:
+				work_left = 1
 		COLLECT:
 			if kingdom.buildings.has(target):
 				pouch += kingdom.take_tax(target)
@@ -312,6 +331,10 @@ func _finish_work() -> void:
 			var dest: Vector2i = kingdom.den_doorstep(home, tile()) \
 				if kind == "goblin" else home
 			path = kingdom.find_path(tile(), dest)
+		PROTECT:
+			kingdom.hero_protect(self)
+			state = IDLE
+			purpose = ""
 		HUNT:
 			if kind == "hero":
 				# The hero's spot of hunting: thin the warren's game.

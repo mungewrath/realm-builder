@@ -12,10 +12,11 @@ func _initialize() -> void:
 		failed = true
 		print("FAIL: generation not deterministic")
 
-	var counts := {0: 0, 1: 0, 2: 0, 3: 0}
+	var counts := {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
 	for t in first:
 		counts[t] += 1
-	if counts[0] == 0 or counts[1] == 0 or counts[2] == 0 or counts[3] == 0:
+	if counts[0] == 0 or counts[1] == 0 or counts[2] == 0 or counts[3] == 0 \
+			or counts[4] == 0:
 		failed = true
 		print("FAIL: missing terrain type: %s" % [counts])
 
@@ -41,5 +42,9 @@ func _initialize() -> void:
 		failed = true
 		print("FAIL: mountain buildable")
 
-	print("RESULT: %s (grass=%d forest=%d water=%d mountain=%d)" % ["PASS" if not failed else "FAIL", counts[0], counts[1], counts[2], counts[3]])
+	if WorldC.is_buildable(WorldC.find_terrain(4)):
+		failed = true
+		print("FAIL: swamp buildable")
+
+	print("RESULT: %s (grass=%d forest=%d water=%d mountain=%d swamp=%d)" % ["PASS" if not failed else "FAIL", counts[0], counts[1], counts[2], counts[3], counts[4]])
 	quit(1 if failed else 0)

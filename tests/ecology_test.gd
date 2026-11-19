@@ -75,6 +75,15 @@ func _quiet_wilds(sim) -> void:
 	sim.wild_spawn_chance = 0.0
 	sim.wild_respawn_rest_left = 999999
 
+func _site_terrain(sim, site: String) -> int:
+	if site == "forest":
+		return sim.world.FOREST
+	if site == "swamp":
+		return sim.world.SWAMP
+	if site == "mountain_edge":
+		return sim.world.MOUNTAIN
+	return sim.world.GRASS
+
 func _test_seeded_lairs() -> void:
 	var sim = _make_sim(301)
 	var wild := _wild_dens(sim)
@@ -88,9 +97,7 @@ func _test_seeded_lairs() -> void:
 		return
 	for p in wild:
 		var row = sim.DEN_KINDS[sim.dens[p].kind]
-		var want: int = sim.world.GRASS if row.site == "grass" else sim.world.FOREST
-		if row.site == "mountain_edge":
-			want = sim.world.MOUNTAIN
+		var want: int = _site_terrain(sim, row.site)
 		if sim.world.get_terrain(p) != want:
 			_fail("wild den %s squatting on wrong terrain" % p)
 		if Vector2(p).distance_to(Vector2(sim.keep_pos)) < 8:
@@ -237,7 +244,7 @@ func _test_wolf_migration() -> void:
 		_fail("wolf den migration did not relocate the den")
 	for p in still:
 		var row = sim.DEN_KINDS[sim.dens[p].kind]
-		var want: int = sim.world.GRASS if row.site == "grass" else sim.world.FOREST
+		var want: int = _site_terrain(sim, row.site)
 		if sim.world.get_terrain(p) != want:
 			_fail("migrated den squats on wrong terrain")
 	for a in sim.agents:

@@ -118,7 +118,8 @@ func _test_attraction_mix() -> void:
 	if not _build(sim, "shrine", sim.keep_pos + Vector2i(2, 2)):
 		return
 	mix = sim._attraction_mix()
-	if int(mix.get("rogue", 0)) != 1 or int(mix.get("paladin", 0)) != 1:
+	if int(mix.get("rogue", 0)) != 1 or int(mix.get("paladin", 0)) != 1 \
+			or int(mix.get("druid", 0)) != 1:
 		_fail("tavern+shrine mix wrong: %s" % mix)
 	# Incomplete buildings must not attract anyone yet.
 	sim.gold = 200

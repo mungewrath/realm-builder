@@ -210,13 +210,17 @@ func _inspect(p: Vector2i) -> void:
 	var den = sim.dens.get(p) if known else null
 	var pile_gold: int = int(sim.loot_piles.get(p, 0)) if known else 0
 	var here := _agents_here(p)
-	if b == null and den == null and pile_gold <= 0 and here.is_empty():
+	var workable: bool = sim.can_drain_swamp(p) or sim.can_clear_forest(p) \
+		or sim.terrain_works.has(p)
+	if b == null and den == null and pile_gold <= 0 and here.is_empty() \
+			and not workable:
 		_close_inspect()
 		return
 	# A click on a building, den, or loot pile pins the tile; a unit standing
 	# on it is listed underneath, never followed. Only a bare unit click
 	# follows.
-	selected_unit = null if (b != null or den != null or pile_gold > 0) else here[0]
+	selected_unit = null if (b != null or den != null or pile_gold > 0 \
+		or here.is_empty()) else here[0]
 	if selected_unit != null:
 		_inspect_agent(selected_unit)
 		return
@@ -240,29 +244,62 @@ func _fill_tile_inspect(b, den, pile_gold: int) -> void:
 		inspect_title.text = Descriptions.loot_title()
 		inspect_blurb.text = Descriptions.loot_blurb()
 		inspect_status.text = Descriptions.loot_status(pile_gold)
+	else:
+		var t: int = sim.world.get_terrain(selected_tile)
+		inspect_title.text = Descriptions.terrain_title(t)
+		inspect_blurb.text = Descriptions.terrain_blurb(t)
+		inspect_status.text = Descriptions.terrain_status(t, sim, selected_tile)
 
 func _refresh_action(p: Vector2i, den) -> void:
-	# One-tap bounty flags live on the lair's inspector card. Any lair works
-	# (goblin den, wild warren, bandit camp) — the realm's own buildings are
-	# not bounty-able.
-	if den == null or not dens_reachable(p):
-		inspect_action.visible = false
+	# One-tap actions live on the inspector card: bounty flags on any lair
+	# the realm can reach, and terrain work on charted marsh or woods.
+	if den != null:
+		if not dens_reachable(p):
+			inspect_action.visible = false
+			return
+		if sim.bounties.has(p):
+			inspect_action.text = "Add to bounty (+%dg)" % (sim.BOUNTY_FEE - sim.BOUNTY_OVERHEAD)
+		else:
+			inspect_action.text = "Post bounty (%dg)" % sim.BOUNTY_FEE
+		inspect_action.visible = true
+		inspect_action.disabled = sim.gold < sim.BOUNTY_FEE
 		return
-	if sim.bounties.has(p):
-		inspect_action.text = "Add to bounty (+%dg)" % (sim.BOUNTY_FEE - sim.BOUNTY_OVERHEAD)
+	var work: Dictionary = sim.terrain_works.get(p, {})
+	if not work.is_empty():
+		var verb: String = "Draining marsh" if work.kind == "drain" \
+			else "Clearing woods"
+		inspect_action.text = "%s (%d/%d)" % [
+			verb, int(work.progress), sim.TERRAIN_WORK_TICKS]
+		inspect_action.visible = true
+		inspect_action.disabled = true
+	elif sim.can_drain_swamp(p):
+		inspect_action.text = "Begin draining (%dg)" % sim.drain_cost
+		inspect_action.visible = true
+		inspect_action.disabled = sim.gold < sim.drain_cost
+	elif sim.can_clear_forest(p):
+		inspect_action.text = "Begin clearing (%dg)" % sim.clear_cost
+		inspect_action.visible = true
+		inspect_action.disabled = sim.gold < sim.clear_cost
 	else:
-		inspect_action.text = "Post bounty (%dg)" % sim.BOUNTY_FEE
-	inspect_action.visible = true
+		inspect_action.visible = false
 
 func dens_reachable(p: Vector2i) -> bool:
 	# Only dens the realm can actually reach are bounty-able.
 	return sim.find_path(sim.den_doorstep(p, sim.keep_pos), sim.keep_pos).size() > 0
 
 func _on_inspect_action() -> void:
-	if selected_tile.x >= 0:
+	if selected_tile.x < 0:
+		return
+	if sim.dens.has(selected_tile):
 		sim.post_bounty(selected_tile)
-		_refresh()
-		_refresh_inspect()
+	elif sim.world.get_terrain(selected_tile) == sim.world.SWAMP:
+		sim.drain_swamp(selected_tile)
+	elif sim.world.get_terrain(selected_tile) == sim.world.FOREST:
+		sim.clear_forest(selected_tile)
+	map_view.queue_redraw()
+	minimap.queue_redraw()
+	_refresh()
+	_refresh_inspect()
 
 func _inspect_agent(a) -> void:
 	# Follow mode: the panel tracks the unit wherever it walks.
@@ -307,7 +344,9 @@ func _inspect_tile(p: Vector2i) -> void:
 	var den = sim.dens.get(p) if known else null
 	var pile_gold: int = int(sim.loot_piles.get(p, 0)) if known else 0
 	var here := _agents_here(p)
-	if b == null and den == null and pile_gold <= 0:
+	var workable: bool = sim.can_drain_swamp(p) or sim.can_clear_forest(p) \
+		or sim.terrain_works.has(p)
+	if b == null and den == null and pile_gold <= 0 and not workable:
 		# A razed, claimed, or vanished pin: close rather than stale text.
 		_close_inspect()
 		return

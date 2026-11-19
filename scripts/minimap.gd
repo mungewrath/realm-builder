@@ -12,6 +12,7 @@ const TERRAIN_COLORS := {
 	1: Color(0.2, 0.38, 0.18),
 	2: Color(0.18, 0.34, 0.58),
 	3: Color(0.5, 0.48, 0.46),
+	4: Color(0.28, 0.35, 0.26),
 }
 const UNCHARTED := Color(0.05, 0.06, 0.09)
 const GOLD := Color(0.92, 0.78, 0.2)

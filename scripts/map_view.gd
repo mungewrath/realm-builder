@@ -13,6 +13,7 @@ const TERRAIN_COLORS := {
 	1: Color(0.2, 0.38, 0.18),
 	2: Color(0.18, 0.34, 0.58),
 	3: Color(0.5, 0.48, 0.46),
+	4: Color(0.28, 0.35, 0.26),
 }
 
 const BUILDING_COLORS := {
@@ -29,6 +30,7 @@ const HERO_COLORS := {
 	"rogue": Color(0.55, 0.4, 0.65),
 	"warrior": Color(0.75, 0.4, 0.3),
 	"paladin": Color(0.9, 0.85, 0.55),
+	"druid": Color(0.4, 0.7, 0.45),
 }
 
 const GOLD := Color(0.92, 0.78, 0.2)
@@ -176,12 +178,18 @@ func _draw() -> void:
 					_draw_water(origin, x, y)
 				3:
 					_draw_mountain(origin, x, y)
+				4:
+					_draw_swamp(origin, x, y)
 			# M5 fog: dark until charted; charted ground stays lit
 			# permanently. Edges lighten a step so the veil reads soft.
 			var lvl := _fog_level(p)
 			if lvl < 2:
 				draw_rect(Rect2(origin, Vector2(TILE, TILE)),
 					FOG_DARK, _fog_alpha(p))
+	if sim != null and sim.get("terrain_works") != null:
+		for p in sim.terrain_works:
+			if _fog_level(p) > 0:
+				_draw_terrain_work(p, sim.terrain_works[p])
 	for p in buildings:
 		_draw_building(p, buildings[p])
 	if sim != null and sim.get("dens") != null:
@@ -236,6 +244,15 @@ func _draw_forest(origin: Vector2, x: int, y: int) -> void:
 			px + Vector2(3, 0), px + Vector2(-1, 8), px + Vector2(7, 8),
 		])
 		draw_colored_polygon(crown, Color(0.3, 0.5, 0.22))
+
+func _draw_swamp(origin: Vector2, x: int, y: int) -> void:
+	# Wet ground: dark pools and a few reed tufts.
+	for n in 2:
+		var px := origin + Vector2(_hash(x, y, n + 20) * (TILE - 12) + 4, _hash(x, y, n + 30) * (TILE - 12) + 6)
+		draw_circle(px, 4.0, Color(0.16, 0.26, 0.2))
+	for n in 3:
+		var rx := origin + Vector2(_hash(x, y, n + 40) * (TILE - 8) + 4, _hash(x, y, n + 50) * (TILE - 14) + 12)
+		draw_line(rx, rx + Vector2(0, -7), Color(0.4, 0.52, 0.32), 1.4)
 
 func _draw_water(origin: Vector2, x: int, y: int) -> void:
 	var light := Color(0.3, 0.48, 0.7)
@@ -331,6 +348,10 @@ func _draw_den(p: Vector2i, den: Dictionary) -> void:
 		_draw_gnome_enclave(p)
 	elif kind_key == "bandit_camp":
 		_draw_bandit_camp(p)
+	elif kind_key == "frog_den":
+		_draw_frog_pond(p)
+	elif kind_key == "owlbear_den":
+		_draw_owlbear_den(p)
 	else:
 		_draw_hag_coven(p)
 	_draw_bounty_flag(p)
@@ -361,6 +382,30 @@ func _draw_goblin_den(p: Vector2i, den: Dictionary) -> void:
 	draw_colored_polygon(pennant, Color(0.7, 0.15, 0.12))
 	for i in int(den.level):
 		draw_circle(mouth + Vector2(-9 + i * 7, -16), 2.2, GOLD)
+
+func _draw_frog_pond(p: Vector2i) -> void:
+	# A reedy pool with lily pads and a couple of bright eyes.
+	var origin := Vector2(p.x * TILE, p.y * TILE)
+	var hub := origin + Vector2(TILE / 2.0, TILE - 10)
+	draw_circle(hub, 9.0, Color(0.16, 0.3, 0.24))
+	draw_circle(hub + Vector2(-3, 0), 3.0, Color(0.3, 0.5, 0.3))
+	draw_circle(hub + Vector2(4, 2), 2.0, Color(0.3, 0.5, 0.3))
+	var eyes := hub + Vector2(0, -4)
+	draw_circle(eyes + Vector2(-2, 0), 1.2, Color(0.9, 0.85, 0.35))
+	draw_circle(eyes + Vector2(2, 0), 1.2, Color(0.9, 0.85, 0.35))
+	for n in 2:
+		var rx := origin + Vector2(6 + n * 17, TILE - 20 + n * 4)
+		draw_line(rx, rx + Vector2(0, -8), Color(0.4, 0.52, 0.32), 1.4)
+
+func _draw_owlbear_den(p: Vector2i) -> void:
+	# A trampled hollow ringed with feathers and old bones.
+	var origin := Vector2(p.x * TILE, p.y * TILE)
+	var hollow := origin + Vector2(TILE / 2.0, TILE - 7)
+	draw_circle(hollow, 10.0, Color(0.25, 0.22, 0.16))
+	draw_circle(hollow + Vector2(0, 2), 6.5, Color(0.07, 0.06, 0.05))
+	draw_line(hollow + Vector2(-7, -5), hollow + Vector2(-2, -9), Color(0.72, 0.64, 0.48), 2.0)
+	draw_line(hollow + Vector2(7, -4), hollow + Vector2(3, -8), Color(0.72, 0.64, 0.48), 2.0)
+	draw_circle(origin + Vector2(9, 11), 1.8, Color(0.85, 0.82, 0.7))
 
 func _draw_warren(p: Vector2i) -> void:
 	# A rabbit warren: a sandy mound with burrow holes.
@@ -441,6 +486,23 @@ func _draw_hag_coven(p: Vector2i) -> void:
 	draw_line(origin + Vector2(9, TILE - 20), origin + Vector2(9, TILE - 14),
 		Color(0.7, 0.6, 0.3), 1.4)
 	draw_circle(origin + Vector2(9, TILE - 13), 1.6, Color(0.75, 0.65, 0.3))
+
+func _draw_terrain_work(p: Vector2i, work: Dictionary) -> void:
+	# Staked-out ground: outline plus a progress bar, wet-blue for draining
+	# and timber-brown for felling.
+	var origin := Vector2(p.x * TILE, p.y * TILE)
+	var col := Color(0.35, 0.58, 0.55) if work.kind == "drain" \
+		else Color(0.52, 0.36, 0.2)
+	draw_rect(Rect2(origin + Vector2(4, 4), Vector2(TILE - 8, TILE - 8)),
+		col, false, 1.5)
+	draw_line(origin + Vector2(8, TILE - 14), origin + Vector2(TILE - 12, 8),
+		col, 2.0)
+	draw_line(origin + Vector2(8, 8), origin + Vector2(TILE - 12, TILE - 14),
+		col, 1.0)
+	var frac: float = clampf(float(work.progress) / float(sim.TERRAIN_WORK_TICKS),
+		0.0, 1.0)
+	draw_rect(Rect2(origin + Vector2(6, TILE - 7),
+		Vector2((TILE - 12) * frac, 3)), col)
 
 func _draw_loot_pile(p: Vector2i) -> void:
 	# A spilled purse: a little heap of coins on the ground.

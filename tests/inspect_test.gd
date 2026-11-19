@@ -67,7 +67,8 @@ func _test_wild_den_text() -> void:
 	var D = load("res://scripts/descriptions.gd")
 	var titles := {}
 	var kinds := ["goblin_den", "rabbit_warren", "wolf_den", "spider_den",
-		"kobold_den", "gnome_enclave", "bandit_camp", "hag_coven"]
+		"frog_den", "owlbear_den", "kobold_den", "gnome_enclave", "bandit_camp",
+		"hag_coven"]
 	for kind in kinds:
 		var t: String = D.den_title(kind)
 		if t == "" or D.den_blurb(kind) == "":
@@ -93,7 +94,7 @@ func _test_creature_titles() -> void:
 	var D = load("res://scripts/descriptions.gd")
 	var sim = _make_sim(9)
 	var AgentC = load("res://scripts/agents.gd")
-	for species in ["rabbit", "wolf", "spider"]:
+	for species in ["rabbit", "wolf", "spider", "frog", "owlbear"]:
 		var a = AgentC.new()
 		a.species = species
 		a.setup(sim, "creature", sim.keep_pos)

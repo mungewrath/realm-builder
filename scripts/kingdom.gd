@@ -65,6 +65,15 @@ const BUILD_COSTS := {
 	"shrine": SHRINE_COST,
 }
 
+# M6.3 — terrain actions. Drained marsh becomes farmland; cleared woods
+# become open ground. Both leave a mark on the wilds (pollution), which is
+# what druids read as a desecration.
+const DRAIN_COST := 25
+const CLEAR_COST := 15
+# Ordering the work only buys the attempt; peasants (or a helpful hero) must
+# invest labour ticks before the land actually changes.
+const TERRAIN_WORK_TICKS := 4
+
 # M4 — heroes & attraction (the indirect-control core). Heroes arrive on
 # their own, score the world against their personality table, and act on
 # their own judgment. The player nudges with buildings, gold, and bounty
@@ -94,11 +103,20 @@ const HERO_CLASSES := {
 		"weights": {"bounty": 3, "treasure": 0, "smite_evil": 9, "assist": 4,
 			"hunt": 0, "pray": 6, "carouse": 0},
 	},
+	# M6.3: the druid. No herb grove exists yet (M7), so shrines draw them
+	# for now; their heart is in the wilds, not the flag.
+	"druid": {
+		"title": "Druid",
+		"attracted_by": "shrine",
+		"hp": 12,
+		"weights": {"bounty": 0, "treasure": 0, "smite_evil": 2, "assist": 1,
+			"hunt": 0, "pray": 3, "carouse": 0, "protect": 9},
+	},
 }
 # Ventures outrank leisure, leisure outranks idle strolling; ties break
 # toward the earlier entry.
 const HERO_GOAL_PRIORITY := ["rest", "shop", "smite", "bounty", "treasure",
-	"hunt", "pray", "carouse", "explore", "assist", "patrol"]
+	"protect", "hunt", "pray", "carouse", "explore", "assist", "patrol"]
 
 const HERO_PURSE_TARGET := 10
 const HERO_FATIGUE_MAX := 5
@@ -109,6 +127,7 @@ const HERO_REST_TICKS := 10
 const HERO_CAROUSE_TICKS := 8
 const HERO_PRAY_TICKS := 6
 const HERO_HUNT_TICKS := 4
+const HERO_PROTECT_TICKS := 5
 const HERO_XP_PER_LEVEL := 4
 const BOUNTY_FEE := 20
 const BOUNTY_OVERHEAD := 2 # the posting office's cut; the rest lands on the flag
@@ -219,6 +238,7 @@ const DEN_KINDS := {
 		"role": "predator",
 		"unit": "wolf",
 		"diet": ["rabbit_warren"],
+		"habitat": {"terrain": "forest", "min": 3, "radius": 6},
 		"fallback": "farm", # warrens gone: packs raid farm stores
 		"spies_as": "A wolf den is spied in the deep woods!",
 	},
@@ -230,7 +250,32 @@ const DEN_KINDS := {
 		"role": "predator",
 		"unit": "spider",
 		"diet": ["goblin_den"],
+		"habitat": {"terrain": "forest", "min": 3, "radius": 6},
 		"spies_as": "A giant spider nest is spied in the woods!",
+	},
+	# M6.3: the marsh chain — frogs breed in the bogs, owlbears stalk the
+	# frogs, and draining the wet ground collapses both in turn.
+	"frog_den": {
+		"title": "Frog Pond",
+		"faction": "swampfolk",
+		"hostile": false,
+		"site": "swamp",
+		"role": "prey",
+		"unit": "frog",
+		"habitat": {"terrain": "swamp", "min": 3, "radius": 6},
+		"spies_as": "A chorus of frogs is heard in the marsh!",
+	},
+	"owlbear_den": {
+		"title": "Owlbear Den",
+		"faction": "wilders",
+		"hostile": false,
+		"site": "forest",
+		"role": "predator",
+		"unit": "owlbear",
+		"diet": ["frog_den"],
+		"fallback": "farm", # frogs gone: owlbears range toward the farms
+		"habitat": {"terrain": "forest", "min": 3, "radius": 6},
+		"spies_as": "An owlbear's screech echoes from the deep woods!",
 	},
 	# M6.2 factions: the hills hold old enemies — kobold burrows and gnome
 	# enclaves squabble over the same ridges — while bandit camps squat by
@@ -265,6 +310,7 @@ const DEN_KINDS := {
 		"hostile": true,
 		"site": "forest",
 		"role": "curser",
+		"habitat": {"terrain": "forest", "min": 3, "radius": 6},
 		"spies_as": "A hag coven is spied in the deep woods!",
 	},
 }
@@ -303,6 +349,8 @@ const CREATURE_STATS := {
 	"rabbit": {"speed": 2.2, "hp": 1, "carry": 2},
 	"wolf": {"speed": 3.0, "hp": 3, "carry": 3},
 	"spider": {"speed": 2.4, "hp": 3, "carry": 2},
+	"frog": {"speed": 2.0, "hp": 1, "carry": 2},
+	"owlbear": {"speed": 2.8, "hp": 6, "carry": 4},
 }
 
 const WILD_DEN_FOOD_START := 5
@@ -311,11 +359,12 @@ const PREY_FOOD_CAP := 8
 # Wild ecology: toggle, caps, and pacing. Existing exact-accounting suites
 # run with `wild_ecology` off, same pattern as fog and the gold trickle.
 var wild_ecology := true
-var wild_dens_max := 8
+var wild_dens_max := 10
 var wild_spawn_chance := 0.2
 var wild_spawn_weights := {
-	"rabbit_warren": 26, "wolf_den": 20, "spider_den": 16,
-	"kobold_den": 12, "gnome_enclave": 10, "bandit_camp": 12, "hag_coven": 10,
+	"rabbit_warren": 22, "wolf_den": 17, "spider_den": 14,
+	"frog_den": 15, "owlbear_den": 9,
+	"kobold_den": 11, "gnome_enclave": 9, "bandit_camp": 11, "hag_coven": 9,
 }
 var den_migrate_ticks := 300
 var prey_regrow_ticks := 30
@@ -352,6 +401,18 @@ var hag_curse_ticks := 300
 var hag_curse_duration := 300
 var hag_reach := 20
 var curses_cast := 0
+
+# M6.3 — terrain actions & the druid's reaction.
+var drain_cost := DRAIN_COST
+var clear_cost := CLEAR_COST
+# tile -> {"kind": "drain"|"clear", "progress": int}; cleared on completion.
+var terrain_works := {}
+var tiles_drained := 0
+var tiles_cleared := 0
+var pollution := 0 # wilds despoiled: forests felled and marshes drained
+var druid_pollution_limit := 8
+var wilderness_tended := 0
+var druids_departed := 0
 
 # M4 — heroes. Attraction pace and hero count are vars so tests and tuning
 # can adjust them. Bounties are the player's one-tap flags on dens; loot
@@ -530,6 +591,86 @@ func build_at(kind: String, p: Vector2i) -> bool:
 	buildings[p] = {"kind": kind, "complete": false, "tax": 0, "progress": 0}
 	last_event = "Construction started: " + kind
 	return true
+
+func can_drain_swamp(p: Vector2i) -> bool:
+	return world != null and world.in_bounds(p) and explored_at(p) \
+		and world.get_terrain(p) == world.SWAMP \
+		and not dens.has(p) and not buildings.has(p) \
+		and not terrain_works.has(p)
+
+func drain_swamp(p: Vector2i) -> bool:
+	# Orders the work: the fee is paid now, the land changes once labour is
+	# invested (see tick_terrain). Keeps terrain shaping a real commitment,
+	# like raising a building.
+	if not can_drain_swamp(p):
+		last_event = "Only charted, open marsh can be drained"
+		return false
+	if gold < drain_cost:
+		last_event = "Not enough gold to drain the marsh"
+		return false
+	gold -= drain_cost
+	terrain_works[p] = {"kind": "drain", "progress": 0}
+	last_event = "Peasants begin draining the marsh"
+	return true
+
+func can_clear_forest(p: Vector2i) -> bool:
+	return world != null and world.in_bounds(p) and explored_at(p) \
+		and world.get_terrain(p) == world.FOREST \
+		and not dens.has(p) and not buildings.has(p) \
+		and not terrain_works.has(p)
+
+func clear_forest(p: Vector2i) -> bool:
+	# Orders the work, as with draining: fee first, labour later.
+	if not can_clear_forest(p):
+		last_event = "Only charted, open woods can be cleared"
+		return false
+	if gold < clear_cost:
+		last_event = "Not enough gold to clear the woods"
+		return false
+	gold -= clear_cost
+	terrain_works[p] = {"kind": "clear", "progress": 0}
+	last_event = "Peasants begin clearing the woods"
+	return true
+
+func tick_terrain(p: Vector2i) -> bool:
+	# One labour tick on a terrain worksite. Returns true on the tick the
+	# land changes; progress persists across workers like a build site.
+	if not terrain_works.has(p):
+		return false
+	var w: Dictionary = terrain_works[p]
+	w.progress = int(w.progress) + 1
+	if int(w.progress) < TERRAIN_WORK_TICKS:
+		return false
+	terrain_works.erase(p)
+	if w.kind == "drain":
+		world.set_terrain(p, world.GRASS)
+		_note_terrain_opened(p)
+		tiles_drained += 1
+		pollution += 2
+		last_event = "The marsh is drained for farmland"
+	else:
+		world.set_terrain(p, world.GRASS)
+		tiles_cleared += 1
+		pollution += 1
+		last_event = "The woods are cleared for timber"
+	return true
+
+func _note_terrain_opened(p: Vector2i) -> void:
+	# Draining marsh creates new open ground. Track it the same way the
+	# fog layer does at world attach, so exploration and build gating stay
+	# consistent.
+	if open_tiles.size() != world.SIZE_X * world.SIZE_Y:
+		return
+	var i: int = p.y * world.SIZE_X + p.x
+	if open_tiles[i] == 1:
+		return
+	open_tiles[i] = 1
+	open_tile_total += 1
+	if explored.size() == open_tiles.size():
+		if explored[i] == 1:
+			open_tiles_explored += 1
+		else:
+			uncharted_open[p] = true
 
 func tick_build(p: Vector2i) -> bool:
 	# One work tick on a construction site; progress persists across builders.
@@ -720,6 +861,10 @@ func _assign_jobs() -> void:
 		if site.x >= 0:
 			a.assign(site, AgentC.BUILD)
 			continue
+		var work := _nearest_free_terrain(a.tile())
+		if work.x >= 0:
+			a.assign(work, AgentC.TERRAIN)
+			continue
 		var farm := _nearest_free_farm(a.tile())
 		if farm.x >= 0:
 			a.assign(farm, AgentC.FARM)
@@ -745,6 +890,18 @@ func _claimed(target: Vector2i, purpose: String) -> bool:
 		if a.purpose == purpose and a.target == target and a.state != AgentC.IDLE:
 			return true
 	return false
+
+func _nearest_free_terrain(from: Vector2i) -> Vector2i:
+	var best := Vector2i(-1, -1)
+	var best_d := INF
+	for p in terrain_works:
+		if _claimed(p, AgentC.TERRAIN):
+			continue
+		var d := Vector2(p).distance_squared_to(Vector2(from))
+		if d < best_d:
+			best_d = d
+			best = p
+	return best
 
 func _nearest_free_site(from: Vector2i) -> Vector2i:
 	var best := Vector2i(-1, -1)
@@ -1347,14 +1504,19 @@ func _wild_den_site(kind_key: String, near := Vector2i(-99, -99), near_r := 0,
 	# and building, and (unless migrating toward prey) far from the keep.
 	if DEN_KINDS[kind_key].site == "mountain_edge":
 		return _mountain_edge_site(near, near_r, clearance, min_keep)
-	var terrain_want: int = world.GRASS if DEN_KINDS[kind_key].site == "grass" \
-		else world.FOREST
+	var site: String = DEN_KINDS[kind_key].site
+	var terrain_want: int = world.GRASS
+	if site == "forest":
+		terrain_want = world.FOREST
+	elif site == "swamp":
+		terrain_want = world.SWAMP
 	var best := Vector2i(-1, -1)
 	var pool := []
 	for y in world.SIZE_Y:
 		for x in world.SIZE_X:
 			var p := Vector2i(x, y)
-			if world.get_terrain(p) != terrain_want or dens.has(p) or buildings.has(p):
+			if world.get_terrain(p) != terrain_want or dens.has(p) \
+					or buildings.has(p) or terrain_works.has(p):
 				continue
 			if near_r <= 0:
 				if Vector2(p).distance_to(Vector2(keep_pos)) < min_keep:
@@ -1424,6 +1586,19 @@ func _seed_wild_dens() -> void:
 		woods = _wild_den_site("wolf_den", Vector2i(-99, -99), 0, 4, 8)
 	if woods.x >= 0:
 		_place_wild_den("wolf_den", woods)
+	# Marshes: a frog pond and the owlbear that stalks it. Draining the bog
+	# unwinds the chain — frogs lose their ground, the owlbear loses its
+	# frogs and ranges toward the farms.
+	var pond := _wild_den_site("frog_den")
+	if pond.x < 0:
+		pond = _wild_den_site("frog_den", Vector2i(-99, -99), 0, 4, 8)
+	if pond.x >= 0:
+		_place_wild_den("frog_den", pond)
+		var screech := _wild_den_site("owlbear_den", pond, 8)
+		if screech.x < 0:
+			screech = _wild_den_site("owlbear_den")
+		if screech.x >= 0:
+			_place_wild_den("owlbear_den", screech)
 	# The old feud: a kobold burrow and a gnome enclave squat the closest
 	# pair of hill shoulders — claims nearly overlapping from the start, so
 	# the tension ledger has something to grind on. If the hills offer only
@@ -1526,23 +1701,29 @@ func _wild_dens_tick() -> void:
 		var kind_key: String = den.get("kind", "goblin_den")
 		if kind_key == "goblin_den":
 			continue # goblins raid instead of migrating; hunger drives them
-		if DEN_KINDS[kind_key].role == "prey":
+		var row: Dictionary = DEN_KINDS[kind_key]
+		if row.role == "prey":
 			den.regrow = int(den.regrow) + 1
 			if int(den.regrow) >= prey_regrow_ticks:
 				den.regrow = 0
 				den.food = mini(int(den.food) + 1, PREY_FOOD_CAP)
-		elif DEN_KINDS[kind_key].role == "predator" and int(den.food) > 0:
+		elif row.role == "predator" and int(den.food) > 0:
 			# A pack eats: the larder drains between kills, so hunger (and
 			# therefore hunting) comes round on its own.
 			den.upkeep = int(den.get("upkeep", predator_upkeep_ticks)) - 1
 			if int(den.upkeep) <= 0:
 				den.upkeep = predator_upkeep_ticks
 				den.food = int(den.food) - 1
-		# Only larder-keeping kinds migrate or starve: traders, raiders and
-		# cursers live off their wits (and other people's purses).
-		if not ["prey", "predator", "thief"].has(DEN_KINDS[kind_key].role):
+		# Larder-keepers and land-bound lairs migrate or starve; traders
+		# and raiders live off their wits (and other people's purses).
+		if not ["prey", "predator", "thief", "curser"].has(row.role):
 			continue
-		if int(den.food) > 0:
+		var fed: bool = int(den.food) > 0
+		# Some lairs also need the land itself: a drained marsh drowns the
+		# frogs as surely as an empty larder.
+		if row.has("habitat") and not _habitat_ok(p, row.habitat):
+			fed = false
+		if fed:
 			den.unmet = 0
 			continue
 		den.unmet = int(den.unmet) + 1
@@ -1553,6 +1734,25 @@ func _wild_dens_tick() -> void:
 			else:
 				_migrate_den(p, den, dest)
 	_wild_respawn_tick()
+
+func _habitat_ok(p: Vector2i, habitat: Dictionary) -> bool:
+	# A den's land need: count suitable terrain within its claim. Draining
+	# the bog under a frog pond is how the marsh chain starts collapsing.
+	var want: int = world.SWAMP
+	if habitat.get("terrain", "swamp") == "forest":
+		want = world.FOREST
+	elif habitat.get("terrain", "swamp") == "grass":
+		want = world.GRASS
+	var r: int = int(habitat.get("radius", den_claim_radius))
+	var n := 0
+	for dy in range(-r, r + 1):
+		for dx in range(-r, r + 1):
+			if dx * dx + dy * dy > r * r:
+				continue
+			var q := p + Vector2i(dx, dy)
+			if world != null and world.get_terrain(q) == want:
+				n += 1
+	return n >= int(habitat.get("min", 1))
 
 func _migration_site(p: Vector2i, den: Dictionary) -> Vector2i:
 	# Where a starving den moves: predators follow their prey (a warren of
@@ -1633,7 +1833,9 @@ func _hunter_out(den_pos: Vector2i) -> bool:
 
 func _hunt_target(a) -> Vector2i:
 	var den: Dictionary = dens.get(a.home, {})
-	var row: Dictionary = DEN_KINDS[den.get("kind", "goblin_den")]
+	var row: Dictionary = DEN_KINDS.get(den.get("kind", ""), {})
+	if not row.has("diet"):
+		return Vector2i(-1, -1)
 	var prey := _nearest_prey_den(a.home, row.diet)
 	if prey.x >= 0:
 		return prey
@@ -1671,7 +1873,14 @@ func _wild_creatures_tick() -> void:
 
 func _roll_creature_behavior(a) -> void:
 	var den: Dictionary = dens.get(a.home, {})
-	if a.species == "rabbit":
+	var row: Dictionary = DEN_KINDS.get(den.get("kind", ""), {})
+	var role: String = row.get("role", "")
+	if role == "":
+		# A lair cleared out from under its beasts: rabbits and frogs still
+		# graze, everything else falls back to hunting.
+		role = "prey" if (a.species == "rabbit" or a.species == "frog") \
+			else "predator"
+	if role == "prey":
 		var roll := _weighted_intent({"graze": 60, "wander": 25, "lurk": 15})
 		match roll:
 			"graze":
@@ -2081,8 +2290,13 @@ func _attraction_mix() -> Dictionary:
 		if not b.complete:
 			continue
 		for cls in HERO_CLASSES:
-			if HERO_CLASSES[cls].attracted_by == b.kind:
-				mix[cls] = int(mix.get(cls, 0)) + 1
+			if HERO_CLASSES[cls].attracted_by != b.kind:
+				continue
+			# A druid smells a defiled realm from the road and turns back:
+			# no point attracting one just to watch it depart next tick.
+			if cls == "druid" and pollution >= druid_pollution_limit:
+				continue
+			mix[cls] = int(mix.get(cls, 0)) + 1
 	return mix
 
 func _spawn_hero(cls: String) -> void:
@@ -2198,6 +2412,12 @@ func hero_goal_scores(h) -> Dictionary:
 		for p in known_dens:
 			top = maxi(top, int(dens[p].level))
 		scores["smite"] = int(w.smite_evil) + top
+	# protect_wilderness: druids care about the land, and the more of it
+	# the realm has stripped, the harder the pull.
+	if int(w.get("protect", 0)) > 0:
+		var wilds := _wilds_known_to_realm()
+		if not wilds.is_empty():
+			scores["protect"] = int(w.protect) + mini(pollution, 10)
 	var known_piles := _piles_known_to_realm()
 	if int(w.treasure) > 0 and not known_piles.is_empty():
 		var best_gold := 0
@@ -2233,7 +2453,8 @@ func hero_goal_scores(h) -> Dictionary:
 		# (The market still outranks it while the purse is worth banking.)
 		scores["carouse"] = (int(w.carouse) + rng.randi_range(0, 1)
 			+ mini(int(h.pouch), 40) / 4) / leisure_damp
-	if int(w.assist) > 0 and _nearest_free_site(h.tile()).x >= 0:
+	if int(w.assist) > 0 and (_nearest_free_site(h.tile()).x >= 0 \
+			or _nearest_free_terrain(h.tile()).x >= 0):
 		scores["assist"] = int(w.assist)
 	# Unknown land beats idle strolling: with no venture on the books, a
 	# hero heads for the frontier about half the time (a coin-flip against
@@ -2265,6 +2486,30 @@ func _nearest_known_warren(from: Vector2i) -> Vector2i:
 	var best := Vector2i(-1, -1)
 	var best_d := INF
 	for p in _warrens_known_to_realm():
+		var d := Vector2(p).distance_squared_to(Vector2(from))
+		if d < best_d:
+			best_d = d
+			best = p
+	return best
+
+func _wilds_known_to_realm() -> Array:
+	# The wilds a druid would tend: charted lairs of the wilders and the
+	# marshfolk, whatever their kind.
+	var known := []
+	for p in dens:
+		if is_hostile_den(p):
+			continue
+		var faction: String = DEN_KINDS[dens[p].get("kind", "goblin_den")].faction
+		if faction != "wilders" and faction != "swampfolk":
+			continue
+		if explored_at(p):
+			known.append(p)
+	return known
+
+func _nearest_known_wild(from: Vector2i) -> Vector2i:
+	var best := Vector2i(-1, -1)
+	var best_d := INF
+	for p in _wilds_known_to_realm():
 		var d := Vector2(p).distance_squared_to(Vector2(from))
 		if d < best_d:
 			best_d = d
@@ -2429,6 +2674,11 @@ func _assign_heroes() -> void:
 		if a.kind != "hero":
 			continue
 		_hero_level_check(a)
+		if a.hero_class == "druid" and pollution >= druid_pollution_limit:
+			# The realm has despoiled too much of the land; the druid
+			# abandons it rather than serve the defilers.
+			_druid_depart(a)
+			continue
 		if a.leisure_left > 0:
 			a.leisure_left -= 1
 		if a.state != AgentC.IDLE or a.fighting:
@@ -2457,6 +2707,8 @@ func _hero_decide(h) -> void:
 			h.assign(den_doorstep(den, h.tile()), AgentC.ASSAULT)
 		"treasure":
 			h.assign(_nearest_pile(h.tile()), AgentC.TREASURE)
+		"protect":
+			h.assign(_nearest_known_wild(h.tile()), AgentC.PROTECT)
 		"hunt":
 			h.assign(_nearest_known_warren(h.tile()), AgentC.HUNT)
 		"pray":
@@ -2466,9 +2718,18 @@ func _hero_decide(h) -> void:
 		"explore":
 			h.assign(_explore_target(h.tile()), AgentC.EXPLORE)
 		"assist":
-			h.assign(_nearest_free_site(h.tile()), AgentC.ASSIST)
+			var site := _nearest_free_site(h.tile())
+			h.assign(site if site.x >= 0 else _nearest_free_terrain(h.tile()),
+				AgentC.ASSIST)
 		_:
 			h.assign(_wilds_spot(keep_pos, 5, h.tile()), AgentC.WANDER)
+
+func _druid_depart(h) -> void:
+	if _removals.has(h):
+		return
+	_removals.append(h)
+	druids_departed += 1
+	last_event = "A druid turns away from the defiled realm"
 
 func _hero_level_check(h) -> void:
 	while h.xp >= HERO_XP_PER_LEVEL * h.level:
@@ -2513,6 +2774,18 @@ func hero_carouse(h) -> void:
 		var row: Dictionary = BUILD_TAX["tavern"]
 		b.tax = mini(int(b.tax) + 1, int(row.cap))
 
+func hero_protect(h) -> void:
+	# The druid walks to a wild lair and tends it: a little food in its
+	# larder, a little breathing room for the land.
+	var den: Dictionary = dens.get(h.target, {})
+	if not den.is_empty() and not is_hostile_den(h.target):
+		den.food = mini(int(den.food) + 1, PREY_FOOD_CAP)
+		wilderness_tended += 1
+		if rng.randi_range(0, 2) == 0:
+			last_event = "A druid tends the wilds"
+	h.fatigue += 1
+	h.leisure_left = hero_leisure_cooldown
+
 func hero_hunt(h) -> void:
 	# A spot of hunting: the warren's larder loses a hare or two, and the
 	# hunter comes back a touch more seasoned. Thin the warrens too hard
@@ -2533,10 +2806,12 @@ func hero_take_loot(h) -> void:
 
 func hero_assist(h) -> void:
 	# Occasional flavor: a fresh hero with nothing better to score lends a
-	# hand at a construction site. Never required — assist is the lowest
-	# personality weight.
+	# hand at a construction site or a terrain worksite. Never required —
+	# assist is the lowest personality weight.
 	if buildings.has(h.target) and not buildings[h.target].complete:
 		tick_build(h.target)
+	elif terrain_works.has(h.target):
+		tick_terrain(h.target)
 	h.fatigue += 1
 
 func hero_assault_tick(h) -> void:

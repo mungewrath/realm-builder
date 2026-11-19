@@ -94,7 +94,17 @@ func _initialize() -> void:
 		print("FAIL: keep trickle wrong: %d over 60 ticks" % (broke.gold - g0))
 	# With the trickle sped up, a hard-stuck realm recovers buildability.
 	broke.keep_trickle_ticks = 2
-	var farm: Vector2i = broke.keep_pos + Vector2i(3, 3)
+	var farm := Vector2i(-1, -1)
+	var best_d := INF
+	for y in w2.SIZE_Y:
+		for x in w2.SIZE_X:
+			var p := Vector2i(x, y)
+			if not broke.can_build_at(p):
+				continue
+			var d := Vector2(p).distance_squared_to(Vector2(broke.keep_pos))
+			if d < best_d:
+				best_d = d
+				farm = p
 	broke.gold = 0
 	for i in 30:
 		broke.update()

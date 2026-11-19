@@ -61,18 +61,45 @@ const DEN_INFO := {
 		"title": "Hag Coven",
 		"blurb": "A crooked hut in the deep woods, hung with bones and drying herbs. The hags do not raid — they curse the fields and laugh.",
 	},
+	"frog_den": {
+		"title": "Frog Pond",
+		"blurb": "A ringing, reedy pond in the marsh. The great frogs are the bottom of the food chain — and the first thing to vanish when the water is drained.",
+	},
+	"owlbear_den": {
+		"title": "Owlbear Den",
+		"blurb": "A trampled hollow under the trees. The owlbear hunts the frogs of the marsh; when the frogs are gone, its hungry eyes turn toward the farms.",
+	},
+}
+
+# M6.3: terrain the player can work.
+const TERRAIN_TITLES := {
+	0: "Open Ground",
+	1: "Deep Woods",
+	2: "Water",
+	3: "Mountain",
+	4: "Marshland",
+}
+
+const TERRAIN_BLURBS := {
+	0: "Grass and bare earth, fit for building.",
+	1: "Old woods, thick with game and shade. Cleared, the timber makes way for farmland.",
+	2: "Still water. Nothing is built on it, and few things walk through it.",
+	3: "Broken stone and sheer slopes. Warbands creep down from these heights.",
+	4: "Reed and black water. Frogs breed here and wild things shelter; drained, it makes rich soil.",
 }
 
 const HERO_TITLES := {
 	"rogue": "Rogue",
 	"warrior": "Warrior",
 	"paladin": "Paladin",
+	"druid": "Druid",
 }
 
 const HERO_BLURBS := {
 	"rogue": "A knife-for-hire who loves gold more than glory. Chases treasure flags and bounties, and keeps a share for himself.",
 	"warrior": "A sellsword who honors the flag. Bold in a fight, fond of ale, loyal to whoever posts a bounty.",
 	"paladin": "A holy warrior who smites evil and scorns loot. Fearless before dens; gentle with fresh construction.",
+	"druid": "A keeper of the wild places. Tends the lairs of the land's own creatures — and takes a dim view of drained marshes and felled woods.",
 }
 
 const UNIT_ROLES := {
@@ -84,6 +111,8 @@ const UNIT_ROLES := {
 	"wolf": "Grey Wolf",
 	"spider": "Giant Spider",
 	"bandit": "Bandit",
+	"frog": "Giant Frog",
+	"owlbear": "Owlbear",
 }
 
 static func building_title(kind: String) -> String:
@@ -97,6 +126,27 @@ static func den_title(kind: String = "goblin_den") -> String:
 
 static func den_blurb(kind: String = "goblin_den") -> String:
 	return DEN_INFO.get(kind, DEN_INFO["goblin_den"]).blurb
+
+static func terrain_title(t: int) -> String:
+	return TERRAIN_TITLES.get(t, "Ground")
+
+static func terrain_blurb(t: int) -> String:
+	return TERRAIN_BLURBS.get(t, "")
+
+static func terrain_status(t: int, sim, p := Vector2i(-1, -1)) -> String:
+	# Only the workable terrains reach the inspector; say what a tap does,
+	# or how far the ordered work has got.
+	if sim != null and p.x >= 0 and sim.terrain_works.has(p):
+		var w: Dictionary = sim.terrain_works[p]
+		var verb: String = "draining the marsh" if w.kind == "drain" \
+			else "clearing the woods"
+		return "Peasants are %s (%d/%d work)." % [
+			verb, int(w.progress), sim.TERRAIN_WORK_TICKS]
+	if t == 4 and sim != null:
+		return "Marsh water lies over rich soil. Draining it opens farmland at the cost of the wilds (%dg); the work takes peasant labour." % sim.drain_cost
+	if t == 1 and sim != null:
+		return "Old-growth timber. Clearing the woods opens the ground for building (%dg); the work takes peasant labour — and the druids will notice." % sim.clear_cost
+	return ""
 
 static func loot_title() -> String:
 	return LOOT_TITLE
@@ -143,6 +193,16 @@ static func den_status(den: Dictionary, p: Vector2i = Vector2i(-1, -1), sim = nu
 					% int(den.get("gold", 0))
 			"hag_coven":
 				return "Bones and drying herbs. The hags mutter over their curses and pay no heed to soldiers."
+			"frog_den":
+				if sim != null and p.x >= 0 \
+						and not sim._habitat_ok(p, sim.DEN_KINDS["frog_den"].habitat):
+					return "The marsh has been drained; the pond shrinks and the frogs are dying off."
+				return "Reeds, lilies, and a chorus of frogs. The bottom of the marsh's food chain is thriving."
+			"owlbear_den":
+				if sim != null and p.x >= 0 \
+						and not sim._habitat_ok(p, sim.DEN_KINDS["owlbear_den"].habitat):
+					return "The woods are gone. With no frogs left to hunt, the owlbear's hunger turns toward the farms."
+				return "Bones and feathers litter the hollow. The owlbear is abroad, and the marsh's frogs keep it fed."
 		var status := ""
 		if int(den.get("food", 0)) <= 0:
 			status = "The larder is empty; the den grows desperate."
@@ -265,6 +325,10 @@ static func _creature_activity(a) -> String:
 				return "hauling browse back to the warren"
 			"wolf":
 				return "hauling the kill back to the den"
+			"owlbear":
+				return "dragging a heavy kill to its hollow"
+			"frog":
+				return "carrying a mouthful back to the pond"
 			_:
 				return "dragging supper back to the nest"
 	match a.state:
@@ -275,6 +339,10 @@ static func _creature_activity(a) -> String:
 						return "dozing at the warren"
 					"wolf":
 						return "curled up at the den"
+					"owlbear":
+						return "dozing in its trampled hollow"
+					"frog":
+						return "sitting half-submerged at the pond"
 					_:
 						return "coiled in the nest"
 			match a.behavior:
@@ -288,6 +356,8 @@ static func _creature_activity(a) -> String:
 					match a.species:
 						"rabbit":
 							return "hopping out to graze"
+						"frog":
+							return "croaking out toward the reeds"
 						_:
 							return "rooting about for food"
 				"hunt":
@@ -389,6 +459,8 @@ static func agent_activity(a) -> String:
 							return "off to lend a hand"
 						"explore":
 							return "venturing into the unknown"
+						"protect":
+							return "walking out to tend the wilds"
 						"hunt":
 							return "off after game in the wilds"
 						"pray":
@@ -413,6 +485,8 @@ static func agent_activity(a) -> String:
 							return "kneeling in quiet prayer"
 						"carouse":
 							return "drinking and dicing the night away"
+						"protect":
+							return "tending the land and its creatures"
 						"hunt":
 							return "hunting game in the brush"
 						_:

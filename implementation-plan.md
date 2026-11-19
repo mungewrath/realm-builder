@@ -398,13 +398,46 @@ stack on top of it. Split into staged chunks, each testable headless.
   updated for hill dens and hostile wild lairs; sim suite covers the
   event-log ring (recording, monotonic ids, cap).
 
-## M6.3 — Terrain actions & druid reaction
+## M6.3 — Terrain actions & druid reaction (built, awaiting playtest)
 
-- Drain swamp, clear forest with ripple consequences; the frog→owlbear
-  chain needs swamp terrain, so it lands here; druid
-  protect-wilderness reaction (druid hero class arrives).
-- Tests: chain reactions (drain swamp → frog collapse → owlbear claim
-  shift), tension matrix drift, den migration.
+- The world gains `SWAMP` terrain, and open land is split roughly in
+  thirds: nine woodlands and nine marshes are seeded first, then grown
+  together as organic blobs so each claims about a third of the open
+  ground (forest ~32%, marsh ~32%, grass ~36% across seeds). Land is a
+  standing tradeoff, not an afterthought. Swamp is walkable but not
+  buildable until drained.
+- Terrain actions on the inspector card are *ordered work*, not instant
+  purchases: paying `drain_cost` (25g) or `clear_cost` (15g) stakes out a
+  worksite, then peasants (or a hero lending a hand) invest
+  `TERRAIN_WORK_TICKS` labour ticks before the tile becomes grass.
+  Draining adds the tile to the open-ground/fog bookkeeping, so the new
+  farmland is explorable and buildable at once; pollution (+2 drain, +1
+  clear) lands when the work finishes. Dens and buildings block the work;
+  costs are vars.
+- Marsh chain: `frog_den` (swampfolk, prey, swamp habitat ≥3 within its
+  claim) and `owlbear_den` (wilders, predator, diet frogs, farm
+  fallback). A den whose land need fails migrates or starves even with a
+  full larder, and migration seeks the right terrain. Forest lairs (wolf,
+  spider, owlbear, hag) carry the same forest habitat, so felling woods
+  under them drives them out. Frog/owlbear spawn weights land in the
+  wild tables and `wild_dens_max` rises to 10 for the pair.
+- Druid class arrives (drawn by shrines until the M7 Herbalist Grove):
+  `protect_wilderness` scores charted wilders/swampfolk lairs and rises
+  with pollution; its `protect` goal walks to a wild lair and feeds its
+  larder (+1, capped, counted in `wilderness_tended`). Past
+  `druid_pollution_limit` (8) the druid departs the defiled realm
+  (`druids_departed`, event), and shrines stop drawing new ones while
+  the land stays defiled.
+- UI/readability: swamp tiles and frog/owlbear den art on map and
+  minimap, terrain titles/blurbs/status, druid color and activity lines,
+  and the one-tap terrain action on the same inspector card as bounties.
+- Tests: new `tests/terrain_test.gd` (ordered drain/clear costs and
+  labour, peasant assignment, refusals, frog habitat collapse/migration,
+  forest ripple, owlbear prey→farm fallback, druid
+  scoring/tending/departure, soak). World suite
+  counts swamp; ecology suite maps swamp sites and tolerates lairs
+  cleared out from under their beasts; inspector/hero suites cover the
+  new rows and shrine attraction.
 
 ## M7 — Content & diplomacy pass
 
