@@ -7,8 +7,10 @@ var failed := false
 
 func _initialize() -> void:
 	_test_construction()
+	_test_demolish()
 	_test_tax_round()
 	_test_delivery_accounting()
+	_test_population_abstraction()
 	_test_pop_growth()
 	_test_shortage_churn()
 	_test_long_run()
@@ -26,6 +28,8 @@ func _make_sim(seed_value: int):
 	var sim = load("res://scripts/kingdom.gd").new()
 	sim.wild_ecology = false # exact accounting; ecology has its own suite
 	sim.attach_world(WorldC)
+	sim.building_padding = false
+	sim.building_footprints = false # existing fixtures stay 1x1; footprint checks live in sim_test
 	sim.set_fog_enabled(false) # build/gating accounting without fog gates
 	sim.keep_trickle = 0 # exact gold accounting; trickle has its own check
 	# These tests assert exact economy accounting; goblin raids (M3) would
@@ -55,6 +59,42 @@ func _test_construction() -> void:
 		_fail("completion changed gold")
 	if sim.buildings[p].tax != 0:
 		_fail("brand-new house already taxed")
+
+func _test_demolish() -> void:
+	var sim = _make_sim(43)
+	sim.gold = 200
+	var farm: Vector2i = sim.keep_pos + Vector2i(1, 1)
+	if not sim.build_at("farm", farm):
+		_fail("farm site not placed for demolition")
+		return
+	for i in 80:
+		sim.update()
+		if sim.buildings.has(farm) and sim.buildings[farm].complete:
+			break
+	if not (sim.buildings.has(farm) and sim.buildings[farm].complete):
+		_fail("farm never finished for demolition")
+		return
+	if sim.farms != 1:
+		_fail("farm count before demolition: %d" % sim.farms)
+	if not sim.demolish_building(farm):
+		_fail("friendly farm refused demolition")
+	if sim.buildings.has(farm) or sim.farms != 0:
+		_fail("demolition did not remove farm: farms=%d" % sim.farms)
+	if sim.buildings_demolished != 1:
+		_fail("demolition not counted")
+	if sim.demolish_building(sim.keep_pos):
+		_fail("Palace was demolished")
+	if not sim.buildings.has(sim.keep_pos):
+		_fail("Palace vanished after refused demolition")
+
+	var house: Vector2i = sim.keep_pos + Vector2i(2, 2)
+	if not sim.build_at("house", house):
+		_fail("house site not placed")
+		return
+	if not sim.demolish_building(house):
+		_fail("construction site refused demolition")
+	if sim.buildings.has(house) or sim.houses != 0:
+		_fail("demolished site changed house count: %d" % sim.houses)
 
 func _test_tax_round() -> void:
 	var sim = _make_sim(11)
@@ -130,6 +170,24 @@ func _test_delivery_accounting() -> void:
 		_fail("farm count wrong")
 	if sim.pop < 1:
 		_fail("pop extinct in delivery test")
+
+func _test_population_abstraction() -> void:
+	# Population funds heroes and growth, but only a small visible workforce
+	# ever walks the map.
+	var sim = _make_sim(37)
+	sim.pop = 40
+	sim._sync_peasants()
+	if sim._peasant_count() != sim.PEASANT_AGENT_CAP:
+		_fail("visible peasants not capped: %d" % sim._peasant_count())
+	sim.pop = 2
+	sim._sync_peasants()
+	if sim._peasant_count() != 2:
+		_fail("visible peasants should shrink with population: %d"
+			% sim._peasant_count())
+	sim.pop = 20
+	if sim.hero_cap() != 4:
+		_fail("abstract population should still fund heroes: cap=%d"
+			% sim.hero_cap())
 
 func _test_pop_growth() -> void:
 	# Growth = delivered rations + provisions headroom; declines need shortage.

@@ -28,6 +28,8 @@ func _make_sim(seed_value: int, wild := false):
 	var sim = load("res://scripts/kingdom.gd").new()
 	sim.wild_ecology = wild
 	sim.attach_world(WorldC)
+	sim.building_padding = false
+	sim.building_footprints = false # existing fixtures stay 1x1; footprint checks live in sim_test
 	sim.set_fog_enabled(false)
 	sim.keep_trickle = 0
 	sim.heroes_enabled = false
@@ -352,12 +354,12 @@ func _test_druid_reaction() -> void:
 	if sim.agents.has(h):
 		_fail("departed druid still in the sim")
 	# ...and no fresh druid is drawn to a realm past the pollution limit.
-	var shrine: Vector2i = sim.keep_pos + Vector2i(1, 0)
-	sim.buildings[shrine] = {"kind": "shrine", "complete": true,
+	var grove: Vector2i = sim.keep_pos + Vector2i(1, 0)
+	sim.buildings[grove] = {"kind": "herbalist_grove", "complete": true,
 		"tax": 0, "progress": 0}
 	sim.pollution = 0
 	if not sim._attraction_mix().has("druid"):
-		_fail("shrines stopped drawing druids from a clean realm")
+		_fail("groves stopped drawing druids from a clean realm")
 	sim.pollution = sim.druid_pollution_limit
 	if sim._attraction_mix().has("druid"):
 		_fail("a defiled realm still drew a druid")

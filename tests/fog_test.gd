@@ -31,6 +31,8 @@ func _make_sim(seed_value: int):
 	var sim = load("res://scripts/kingdom.gd").new()
 	sim.wild_ecology = false # fog accounting; ecology has its own suite
 	sim.attach_world(WorldC)
+	sim.building_padding = false
+	sim.building_footprints = false # existing fixtures stay 1x1; footprint checks live in sim_test
 	sim.raids_enabled = false # fog behavior, not warband pacing
 	return sim
 

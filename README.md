@@ -72,6 +72,12 @@ godot --headless --script tests/factions_test.gd
 # Run the terrain tests (drain/clear, marsh chain, druid reaction)
 godot --headless --script tests/terrain_test.gd
 
+# Run the hall tests (new buildings, attraction, production, new classes)
+godot --headless --script tests/halls_test.gd
+
+# Run the progression tests (activity XP, core pursuits, gear shopping)
+godot --headless --script tests/hero_progression_test.gd
+
 # First editor scan (builds .godot/ cache, registers class_name)
 godot --headless --editor --quit
 
@@ -142,6 +148,8 @@ tests/fog_test.gd      Headless fog tests (reveal, landmarks, gating, perf)
 tests/ecology_test.gd  Headless ecology tests (wild dens, food chains, migration)
 tests/factions_test.gd  Headless faction tests (tension, feud, bandits, curses)
 tests/terrain_test.gd   Headless terrain-action tests (marsh chain, druid)
+tests/halls_test.gd    Headless hall tests (new buildings, production, classes)
+tests/hero_progression_test.gd  Headless progression tests (activity XP, gear shopping)
 server/serve_https.py  LAN HTTPS server for the web build
 builds/web/            Exported web build (regenerable, not committed)
 export_presets.cfg     Web export preset (thread support off)

@@ -46,5 +46,25 @@ func _initialize() -> void:
 		failed = true
 		print("FAIL: swamp buildable")
 
+	# Pathfinding can be depth-capped for speculative searches, while real
+	# travel still uses the full BFS.
+	var far := Vector2i(-1, -1)
+	for y in WorldC.SIZE_Y:
+		for x in WorldC.SIZE_X:
+			var p := Vector2i(x, y)
+			if Vector2(p).distance_to(Vector2(center)) < 8:
+				continue
+			if not WorldC.find_path(center, p).is_empty():
+				far = p
+				break
+		if far.x >= 0:
+			break
+	if far.x < 0:
+		failed = true
+		print("FAIL: no distant reachable target for path test")
+	elif not WorldC.find_path(center, far, 2).is_empty():
+		failed = true
+		print("FAIL: depth-capped path escaped its budget")
+
 	print("RESULT: %s (grass=%d forest=%d water=%d mountain=%d swamp=%d)" % ["PASS" if not failed else "FAIL", counts[0], counts[1], counts[2], counts[3], counts[4]])
 	quit(1 if failed else 0)

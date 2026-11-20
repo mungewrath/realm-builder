@@ -11,6 +11,11 @@ const BUILDING_TITLES := {
 	"tavern": "Tavern",
 	"market": "Market",
 	"shrine": "Shrine",
+	"blacksmith": "Blacksmith",
+	"wizard_tower": "Wizard Tower",
+	"ranger_hut": "Ranger Hut",
+	"mead_hall": "Mead Hall",
+	"herbalist_grove": "Herbalist Grove",
 }
 
 const BUILDING_BLURBS := {
@@ -21,6 +26,11 @@ const BUILDING_BLURBS := {
 	"tavern": "A smoky hall of cheap ale and tall tales. Adventurers drift toward it — rogues especially — and rest here between ventures.",
 	"market": "Stalls and scales. Heroes spend their plunder here, and the realm profits from every trade.",
 	"shrine": "Quiet candles and old blessings. The righteous are drawn to it, and evil lairs draw their wrath.",
+	"blacksmith": "Hammer and anvil, sparks and steam. The forge turns out gear for the realm's fighters, and dwarves and warriors both answer its ring.",
+	"wizard_tower": "A crooked spire humming with old power. Mana gathers at its peak, and a wizard's far sight slowly charts the wilds.",
+	"ranger_hut": "A low cabin at the treeline. Rangers range out from it, charting the wilds and keeping hungry beasts away from the settled fields.",
+	"mead_hall": "A longhouse thick with the smell of ale and roasted meat. Barbarians gather here, and strong drink makes bold hands reach for bounty flags.",
+	"herbalist_grove": "Neat rows of herbs and a quiet green hut. Druids and healers tend the grove; its herbs ease wounds and can lift a hag's curse.",
 }
 
 const LOOT_TITLE := "Dropped Loot"
@@ -93,6 +103,10 @@ const HERO_TITLES := {
 	"warrior": "Warrior",
 	"paladin": "Paladin",
 	"druid": "Druid",
+	"dwarf": "Dwarf Craftsman",
+	"wizard": "Wizard",
+	"ranger": "Ranger",
+	"barbarian": "Barbarian",
 }
 
 const HERO_BLURBS := {
@@ -100,6 +114,10 @@ const HERO_BLURBS := {
 	"warrior": "A sellsword who honors the flag. Bold in a fight, fond of ale, loyal to whoever posts a bounty.",
 	"paladin": "A holy warrior who smites evil and scorns loot. Fearless before dens; gentle with fresh construction.",
 	"druid": "A keeper of the wild places. Tends the lairs of the land's own creatures — and takes a dim view of drained marshes and felled woods.",
+	"dwarf": "A stubborn smith with a good hammer and a better head for stone. Lends a hand at building and forges gear for those who fight.",
+	"wizard": "A scholar of fire and sigils. The tower's mana draws them, and they smite evil in ways that leave the grass smoking.",
+	"ranger": "A silent woodsman. Charts the wilds for the realm, hunts game, and keeps the beasts from the farms.",
+	"barbarian": "A roaring fighter from the far hills. Mead and a posted bounty are all the orders a barbarian needs.",
 }
 
 const UNIT_ROLES := {
@@ -158,7 +176,10 @@ static func loot_status(gold: int) -> String:
 	return "%d gold lie in the dirt, waiting for quick hands." % gold
 
 static func hero_title(a) -> String:
-	return "%s · level %d" % [HERO_TITLES.get(a.hero_class, "Adventurer"), a.level]
+	var s := "%s · level %d" % [HERO_TITLES.get(a.hero_class, "Adventurer"), a.level]
+	if int(a.gear) > 0:
+		s += " · gear %d" % int(a.gear)
+	return s
 
 static func hero_blurb(a) -> String:
 	return HERO_BLURBS.get(a.hero_class, "An adventurer of uncertain stripe.")
@@ -262,6 +283,32 @@ static func building_status(kind: String, p: Vector2i, b: Dictionary, sim) -> St
 			return s
 		"shrine":
 			return "Candles burn for the realm's protectors."
+		"blacksmith":
+			var stock := int(b.get("gear", 0))
+			if stock <= 0:
+				return "The forge is hot and the anvil rings; fresh gear is on the way."
+			if stock < sim.GEAR_STOCK_CAP:
+				return "Weapons and mail crowd the racks; %d gear points wait for a buyer." % stock
+			return "The racks are full to groaning with finished gear."
+		"wizard_tower":
+			var mana := int(b.get("mana", 0))
+			if mana <= 0:
+				return "The spire hums softly as mana gathers at its peak."
+			return "The tower's stones pulse with gathered mana and old watchfulness."
+		"ranger_hut":
+			return "Rangers come and go by hidden trails, charting the wilds and watching the treeline."
+		"mead_hall":
+			var morale := int(b.get("morale", 0))
+			if morale <= 0:
+				return "The longhouse waits for its first cask to settle."
+			if morale < sim.MEAD_STOCK_CAP:
+				return "Ale flows and boasts grow louder; the hall's spirit is high."
+			return "The mead hall roars with song and good cheer."
+		"herbalist_grove":
+			var herbs := int(b.get("herbs", 0))
+			if herbs <= 0:
+				return "Green shoots rise in the herb beds, not yet ready for the harvest."
+			return "Bundles of healing herbs hang drying beneath the eaves."
 		"castle":
 			return "The realm numbers %d souls, and the ledger grows with every collector's round." % sim.pop
 	return ""
@@ -392,6 +439,16 @@ static func _hero_home_name(a) -> String:
 			return "guardhouse"
 		"shrine":
 			return "shrine"
+		"blacksmith":
+			return "forge"
+		"wizard_tower":
+			return "wizard tower"
+		"ranger_hut":
+			return "ranger hut"
+		"mead_hall":
+			return "mead hall"
+		"herbalist_grove":
+			return "herbalist grove"
 		_:
 			return "keep"
 
@@ -451,6 +508,10 @@ static func agent_activity(a) -> String:
 							return "riding out to smite evil"
 						"shop":
 							return "walking to market with heavy pockets"
+						"gear":
+							return "off to the forge with a heavy purse"
+						"leave":
+							return "bound for the edge of the realm"
 						"rest":
 							return "seeking a bed and a hot meal"
 						"treasure":
@@ -475,6 +536,8 @@ static func agent_activity(a) -> String:
 							return "resting and recovering"
 						"shop":
 							return "spending loot at the market"
+						"gear":
+							return "haggling over a new blade"
 						"treasure":
 							return "gathering dropped coins"
 						"assist":

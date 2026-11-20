@@ -22,7 +22,7 @@ mouse_filter = 2
 offset_left = 24.0
 offset_top = 16.0
 offset_right = 380.0
-offset_bottom = 260.0
+offset_bottom = 360.0
 theme_override_constants/separation = 12
 
 [node name="Title" type="Label" parent="UI/Root/Header"]
@@ -39,6 +39,17 @@ unique_name_in_owner = true
 theme_override_font_sizes/font_size = 26
 text = "People 0 / 0 | Houses 0"
 
+[node name="HeroLabel" type="Label" parent="UI/Root/Header"]
+unique_name_in_owner = true
+theme_override_font_sizes/font_size = 26
+text = "Heroes 0 / 0"
+
+[node name="HeroRosterButton" type="Button" parent="UI/Root/Header"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 48)
+theme_override_font_sizes/font_size = 22
+text = "Hero Roster"
+
 [node name="EventLabel" type="Label" parent="UI/Root/Header"]
 unique_name_in_owner = true
 theme_override_font_sizes/font_size = 22
@@ -50,53 +61,88 @@ anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
 offset_left = 8.0
-offset_top = -200.0
+offset_top = -260.0
 offset_right = -8.0
-offset_bottom = -30.0
-theme_override_constants/separation = 16
+offset_bottom = -20.0
+theme_override_constants/separation = 10
 alignment = 1
 
 [node name="FarmButton" type="Button" parent="UI/Root/BuildBar"]
 unique_name_in_owner = true
 toggle_mode = true
-custom_minimum_size = Vector2(150, 64)
-theme_override_font_sizes/font_size = 22
+custom_minimum_size = Vector2(108, 52)
+theme_override_font_sizes/font_size = 20
 text = "Farm 10g"
 
 [node name="HouseButton" type="Button" parent="UI/Root/BuildBar"]
 unique_name_in_owner = true
 toggle_mode = true
-custom_minimum_size = Vector2(150, 64)
-theme_override_font_sizes/font_size = 22
+custom_minimum_size = Vector2(108, 52)
+theme_override_font_sizes/font_size = 20
 text = "House 15g"
 
 [node name="GuardButton" type="Button" parent="UI/Root/BuildBar"]
 unique_name_in_owner = true
 toggle_mode = true
-custom_minimum_size = Vector2(150, 64)
-theme_override_font_sizes/font_size = 22
+custom_minimum_size = Vector2(108, 52)
+theme_override_font_sizes/font_size = 20
 text = "Guard 30g"
 
 [node name="TavernButton" type="Button" parent="UI/Root/BuildBar"]
 unique_name_in_owner = true
 toggle_mode = true
-custom_minimum_size = Vector2(150, 64)
-theme_override_font_sizes/font_size = 22
+custom_minimum_size = Vector2(108, 52)
+theme_override_font_sizes/font_size = 20
 text = "Tavern 25g"
 
 [node name="MarketButton" type="Button" parent="UI/Root/BuildBar"]
 unique_name_in_owner = true
 toggle_mode = true
-custom_minimum_size = Vector2(150, 64)
-theme_override_font_sizes/font_size = 22
+custom_minimum_size = Vector2(108, 52)
+theme_override_font_sizes/font_size = 20
 text = "Market 30g"
 
 [node name="ShrineButton" type="Button" parent="UI/Root/BuildBar"]
 unique_name_in_owner = true
 toggle_mode = true
-custom_minimum_size = Vector2(150, 64)
-theme_override_font_sizes/font_size = 22
+custom_minimum_size = Vector2(108, 52)
+theme_override_font_sizes/font_size = 20
 text = "Shrine 35g"
+
+[node name="BlacksmithButton" type="Button" parent="UI/Root/BuildBar"]
+unique_name_in_owner = true
+toggle_mode = true
+custom_minimum_size = Vector2(108, 52)
+theme_override_font_sizes/font_size = 20
+text = "Forge 40g"
+
+[node name="WizardButton" type="Button" parent="UI/Root/BuildBar"]
+unique_name_in_owner = true
+toggle_mode = true
+custom_minimum_size = Vector2(108, 52)
+theme_override_font_sizes/font_size = 20
+text = "Tower 60g"
+
+[node name="RangerButton" type="Button" parent="UI/Root/BuildBar"]
+unique_name_in_owner = true
+toggle_mode = true
+custom_minimum_size = Vector2(108, 52)
+theme_override_font_sizes/font_size = 20
+text = "Ranger 30g"
+
+[node name="MeadButton" type="Button" parent="UI/Root/BuildBar"]
+unique_name_in_owner = true
+toggle_mode = true
+custom_minimum_size = Vector2(108, 52)
+theme_override_font_sizes/font_size = 20
+text = "Mead 45g"
+
+[node name="HerbalistButton" type="Button" parent="UI/Root/BuildBar"]
+unique_name_in_owner = true
+toggle_mode = true
+custom_minimum_size = Vector2(108, 52)
+theme_override_font_sizes/font_size = 20
+text = "Grove 35g"
 
 [node name="DevButton" type="Button" parent="UI/Root"]
 unique_name_in_owner = true

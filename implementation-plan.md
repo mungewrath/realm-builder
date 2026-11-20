@@ -441,13 +441,149 @@ stack on top of it. Split into staged chunks, each testable headless.
 
 ## M7 — Content & diplomacy pass
 
-- Remaining buildings from `content-design.md`: market, shrine, blacksmith,
-  wizard tower, ranger hut, mead hall, herbalist grove, graveyard (risky),
-  sewers.
-- Hero shopping (gear points), tribute diplomacy with bandits/hags,
-  necromancer risk/reward.
-- Tests: per-building attraction + production, tribute stance shifts,
-  graveyard undead events.
+Split into staged chunks like M6: the halls and their folk land first, then
+the gear economy, then the double-edged diplomacy/necromancy pass.
+
+### M7.1 — Remaining halls & new classes (built)
+
+- Five content halls join the build bar: **blacksmith** (40g), **wizard
+  tower** (60g), **ranger hut** (30g), **mead hall** (45g), and **herbalist
+  grove** (35g). Each carries its own production timer so a late hall starts
+  its cycle when the door opens, not on a global beat.
+- **Blacksmith** forges gear points onto its racks (cap 6); **wizard tower**
+  gathers mana (cap 9) and scries a radius of the wilds every minute;
+  **ranger hut** patrols and reveals the ground around it; **mead hall**
+  brews morale (cap 9) that heartens heroes toward bounty flags; **herbalist
+  grove** grows herbs (cap 9) and spends them to lift hag curses, and serves
+  as a hero's resting hearth when the tavern is farther away.
+- New hero classes as content rows: **dwarf craftsman** (blacksmith),
+  **wizard** (tower), **ranger** (hut), **barbarian** (mead hall). The
+  **druid** now follows the herbalist grove instead of the shrine. A hall
+  row's `attracted_by` may list more than one hall (the blacksmith signs
+  warriors as well as dwarves).
+- Ranger calm: a completed hut keeps predator fallback raids off farms
+  within 8 tiles.
+- UI/readability: build-bar buttons, building titles/blurbs/statuses, map
+  glyphs and class colors for every new hall.
+- Tests: `tests/halls_test.gd` (costs, per-building attraction and
+  production, multi-hall arrival, tower/ranger fog reveal, grove cures and
+  rest choice, long soak). Existing hero/terrain suites updated for the
+  druid's move to the grove.
+
+### M7.2 — Experience & the forge economy (built)
+
+- Heroes now earn XP from meaningful ventures, not only kills: exploring,
+  tending wild lairs, hunting, looting treasure, honest worksite labour, and
+  carousing each pay 1 XP. A class's core pursuit pays an extra point, so a
+  rogue grows by treasure and a druid by the wilds. Combat and den-clear XP
+  remain unchanged.
+- **Blacksmith gear is real.** Heroes with at least 8g walk to a forge that
+  has stock and buy one gear point (max 4), turning purse coin back into
+  realm gold. Each gear point adds +1 melee attack alongside level. Wizards
+  pay sages instead and never shop the forge.
+- Gear is shown in the hero inspector (`gear N`), the activity line, and as
+  pale pips above the level pips on the map.
+- Tests: new `tests/hero_progression_test.gd` (activity XP table and
+  integration, explore arrival XP, gear scoring/purchase/refusals, forge
+  stock, melee bonus); full headless suite green.
+
+### Tuning — Lair regrowth & predator pressure (built)
+
+- The wild fills faster than heroes can empty it: goblin dens seed 3 and cap
+  at 5, with a 220-tick respawn rest and 0.65 spawn chance; wild lairs cap at
+  16 with a 110-tick rest and 0.55 chance. Failed-site retries are now
+  measured in tens of ticks rather than hundreds, so a cleared map recovers
+  within a normal session.
+- Predator appetites are sharper: larders drain every 90 ticks (was 200),
+  packs start hunting at 6 food (was 4), and a starving pack at 2 food sends
+  a second hunter out while the first is away.
+- Tests: ecology suite covers the hungry/starving hunt thresholds and
+  second-hunter behavior; the long-run and pacing suites still pass.
+  `tests/hero_progression_test.gd` remains the newest suite, so no README
+  command list change was needed.
+
+### Tuning — Population-scaled hero cap (built)
+
+- The hero ceiling now follows the living peasant population at one hero per
+  five peasants, minimum one (`hero_cap()`, `hero_cap_per_peasant`). Losing
+  people can leave the realm over its means; a growing realm gradually
+  earns room for more heroes.
+- Over the cap, the realm logs two spaced warnings ("too many", then "some
+  may leave"), then a `leave` option joins the hero action table with a pull
+  that grows with the overage. A departing hero walks to the nearest
+  reachable map rim and is removed from the realm, counted in
+  `heroes_departed`; the druid pollution departure uses the same counter.
+- Tests: `tests/heroes_test.gd` covers cap scaling, exactly two warnings,
+  the leave option, map-edge departure, and the long-run
+  spawned = fallen + departed + alive accounting.
+
+### Tuning — Placement breathing room & mobile confirmation (built)
+
+- Buildings now need a full one-tile ring of open ground: `can_build_at()`
+  rejects any tile in the 8-neighbor footprint of an existing building or
+  construction site, including the keep. The check lives in
+  `build_block_reason()`, so the UI can say exactly why a spot is refused.
+  `building_padding` is a var, letting layout-focused tests opt out while
+  `tests/sim_test.gd` proves the rule itself.
+- The build flow is now two-tap for touch screens: choosing a hall stages a
+  map tap, which paints a translucent ghost of the building plus its
+  footprint and padding ring (green valid, red blocked). A **✓ Place** button
+  commits the preview; **✕** cancels. The old tap-to-build shortcut is gone, and the
+  over-cap warning gap is tightened from 45 to 30 ticks.
+
+### Tuning — Multi-tile halls & Palace footprint (built)
+
+- Buildings now occupy real footprints, with the keep (the Palace) a centred
+  **3x3** and the hall rows scaled to their role: tavern, market, shrine,
+  blacksmith, guardhouse, ranger hut and mead hall **2x1**; wizard tower
+  **1x2**; herbalist grove **2x2**; farm and house stay **1x1**.
+- Footprints are validated tile-by-tile, so every covered tile must be
+  charted, clear of dens/works, and have legal terrain. The grove may root
+  on forest or marsh as well as grass; other buildings still demand open
+  grass. Padding is now a one-tile ring around the whole footprint, not just
+  the anchor tile.
+- Map art, construction sites, minimap blocks, placement ghosts, selection
+  outlines and inspector hit-testing all span the full footprint. Tests keep
+  their old compact fixtures via `building_footprints`, while
+  `tests/sim_test.gd` proves centred keep occupancy, grove terrain, padding,
+  and 2x1 occupancy.
+
+### Tuning — Simulation performance budget (built)
+
+- Population is abstract; at most `PEASANT_AGENT_CAP` (4) visible peasants
+  walk the map. Growth, shortage and hero-cap math still use `pop`, so large
+  house-driven populations do not create a crowd of pathfinding villagers.
+- Real travel routes use Godot's native `AStarGrid2D` (C++); the scripted BFS
+  survives only for depth-capped speculative searches. `hero_search_radius`
+  (10) bounds frontier probes and alarm chases, while long journeys still get
+  a full route.
+- `building_origin_at()` uses a tile-to-origin cache keyed by building count
+  and footprint mode, so occupancy checks stay cheap as settlements grow.
+  Raider alarms now check only the eight neighboring tiles instead of every
+  building footprint.
+- Stress check (60 buildings, 45 agents, fog/ecology/raids/heroes): ~34 ms/tick
+  before, ~2.2 ms/tick after on the dev box. Existing ecology/fog perf budget
+  tests remain green.
+
+### Tuning — Hero roster, dismissal & demolition (built)
+
+- The top-left header now carries a live **Heroes x / y** line and a **Hero
+  Roster** button. The roster lists every hero's title, level, gear and current
+  activity; tapping a row selects that hero for the inspector, even when they
+  are standing inside a hall.
+- Selecting a hero offers **Dismiss hero** in the inspector. Dismissal uses the
+  same exit walk as the over-cap `leave` goal, so the hero heads for the map
+  rim and is removed/counted normally; the button disables once they are
+  already leaving.
+- Friendly buildings can be demolished from the inspector; the Palace is
+  excluded. Demolition removes construction sites and completed structures
+  without a refund, updates farm/house/hall counters, and removes a
+  guardhouse's guards.
+- Tests: `tests/heroes_test.gd` covers dismissal and roster counts;
+  `tests/agents_test.gd` covers farm/site demolition and the Palace refusal.
+
+Deferred to the rest of M7: graveyard/sewer risk buildings, tribute
+diplomacy, and the necromancer's undead economy.
 
 ## M8 — Session layer & polish
 

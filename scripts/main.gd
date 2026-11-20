@@ -7,6 +7,10 @@ const SIDE_PANEL_MIN_WIDTH := 900.0
 
 var sim = load("res://scripts/kingdom.gd").new()
 var build_mode := ""
+var placement_tile := Vector2i(-1, -1)
+var placement_panel: PanelContainer
+var placement_label: Label
+var placement_confirm: Button
 var selected_tile := Vector2i(-1, -1)
 var selected_unit = null # when set, the inspect panel follows this agent
 var inspect_panel: PanelContainer
@@ -15,6 +19,11 @@ var inspect_blurb: Label
 var inspect_status: Label
 var inspect_units: Label
 var inspect_action: Button
+
+# Hero roster card: a full list of the realm's heroes and what they are doing.
+var hero_roster_panel: PanelContainer
+var hero_roster_list: VBoxContainer
+var hero_roster_signature := "__unset__"
 
 # Sim speed (dev tool): 1-3x. The tick timer runs at 1/speed seconds.
 const SPEEDS := [1.0, 1.5, 2.0, 3.0]
@@ -35,6 +44,8 @@ var log_last_id := 0
 @onready var map_view := %MapView
 @onready var res_label: Label = %ResLabel
 @onready var pop_label: Label = %PopLabel
+@onready var hero_label: Label = %HeroLabel
+@onready var hero_roster_button: Button = %HeroRosterButton
 @onready var event_label: Label = %EventLabel
 @onready var farm_button: Button = %FarmButton
 @onready var house_button: Button = %HouseButton
@@ -42,6 +53,11 @@ var log_last_id := 0
 @onready var tavern_button: Button = %TavernButton
 @onready var market_button: Button = %MarketButton
 @onready var shrine_button: Button = %ShrineButton
+@onready var blacksmith_button: Button = %BlacksmithButton
+@onready var wizard_button: Button = %WizardButton
+@onready var ranger_button: Button = %RangerButton
+@onready var mead_button: Button = %MeadButton
+@onready var herbalist_button: Button = %HerbalistButton
 @onready var dev_button: Button = %DevButton
 
 func _ready() -> void:
@@ -56,12 +72,22 @@ func _ready() -> void:
 	tavern_button.pressed.connect(_on_tavern_pressed)
 	market_button.pressed.connect(_on_market_pressed)
 	shrine_button.pressed.connect(_on_shrine_pressed)
+	blacksmith_button.pressed.connect(_on_blacksmith_pressed)
+	wizard_button.pressed.connect(_on_wizard_pressed)
+	ranger_button.pressed.connect(_on_ranger_pressed)
+	mead_button.pressed.connect(_on_mead_pressed)
+	herbalist_button.pressed.connect(_on_herbalist_pressed)
 	_build_minimap()
 	_build_inspect_panel()
 	_build_event_log()
+	_build_hero_roster()
+	_build_placement_panel()
 	_build_speed_panel()
+	hero_roster_button.pressed.connect(_toggle_hero_roster)
 	get_viewport().size_changed.connect(_layout_inspect_panel)
 	get_viewport().size_changed.connect(_layout_event_log)
+	get_viewport().size_changed.connect(_layout_hero_roster)
+	get_viewport().size_changed.connect(_layout_placement_panel)
 	tick_timer = Timer.new()
 	tick_timer.wait_time = 1.0 / sim_speed
 	tick_timer.timeout.connect(_on_tick)
@@ -87,18 +113,82 @@ func _on_market_pressed() -> void:
 func _on_shrine_pressed() -> void:
 	_toggle_build("shrine")
 
+func _on_blacksmith_pressed() -> void:
+	_toggle_build("blacksmith")
+
+func _on_wizard_pressed() -> void:
+	_toggle_build("wizard_tower")
+
+func _on_ranger_pressed() -> void:
+	_toggle_build("ranger_hut")
+
+func _on_mead_pressed() -> void:
+	_toggle_build("mead_hall")
+
+func _on_herbalist_pressed() -> void:
+	_toggle_build("herbalist_grove")
+
 func _toggle_build(kind: String) -> void:
 	build_mode = "" if build_mode == kind else kind
+	_clear_placement()
+	if build_mode != "":
+		_close_inspect()
+		_close_event_log()
+		_close_hero_roster()
 	_refresh()
 
 func _on_tile_clicked(p: Vector2i) -> void:
+	_close_hero_roster()
 	if build_mode != "":
-		if sim.build_at(build_mode, p):
-			map_view.queue_redraw()
-			build_mode = ""
-		_refresh()
+		# First tap only stages the building. The check button commits, so a
+		# mis-tap (or an invalid red preview) never spends gold.
+		placement_tile = p
+		_refresh_placement()
 		return
 	_inspect(p)
+
+func _confirm_placement() -> void:
+	if build_mode == "" or placement_tile.x < 0:
+		return
+	if sim.build_at(build_mode, placement_tile):
+		build_mode = ""
+		_clear_placement()
+		map_view.queue_redraw()
+		minimap.queue_redraw()
+		_refresh()
+	else:
+		_refresh_placement()
+		_refresh()
+
+func _cancel_placement() -> void:
+	build_mode = ""
+	_clear_placement()
+	_refresh()
+
+func _clear_placement() -> void:
+	placement_tile = Vector2i(-1, -1)
+	if map_view != null:
+		map_view.set_placement("", Vector2i(-1, -1), false)
+	if placement_panel != null:
+		placement_panel.visible = false
+	if log_button != null:
+		log_button.visible = true
+
+func _refresh_placement() -> void:
+	if build_mode == "" or placement_tile.x < 0:
+		_clear_placement()
+		return
+	var reason: String = sim.build_block_reason(placement_tile, build_mode)
+	var cost: int = sim.BUILD_COSTS[build_mode]
+	if reason == "" and sim.gold < cost:
+		reason = "Not enough gold"
+	var valid: bool = reason == ""
+	map_view.set_placement(build_mode, placement_tile, valid)
+	placement_label.text = "Tap ✓ to place %s" % Descriptions.building_title(build_mode) \
+		if valid else reason
+	placement_confirm.disabled = not valid
+	placement_panel.visible = true
+	log_button.visible = false
 
 func _on_tick() -> void:
 	sim.update()
@@ -111,16 +201,28 @@ func _refresh() -> void:
 	res_label.text = "Gold %d  |  Fed %d/%d  |  Farms %d" % [
 		sim.gold, mini(sim.fed_capacity(), sim.pop), sim.pop, sim.farms]
 	pop_label.text = "People %d / %d  |  Houses %d" % [sim.pop, sim.pop_cap, sim.houses]
+	hero_label.text = "Heroes %d / %d" % [sim.hero_count(), sim.hero_cap()]
 	event_label.text = sim.last_event if sim.last_event != "" else "Drag to explore, pinch to zoom"
 	_refresh_event_log()
+	_refresh_hero_roster()
+	if placement_tile.x >= 0:
+		_refresh_placement()
 	farm_button.set_pressed_no_signal(build_mode == "farm")
 	house_button.set_pressed_no_signal(build_mode == "house")
 	guard_button.set_pressed_no_signal(build_mode == "guardhouse")
 	tavern_button.set_pressed_no_signal(build_mode == "tavern")
 	market_button.set_pressed_no_signal(build_mode == "market")
 	shrine_button.set_pressed_no_signal(build_mode == "shrine")
+	blacksmith_button.set_pressed_no_signal(build_mode == "blacksmith")
+	wizard_button.set_pressed_no_signal(build_mode == "wizard_tower")
+	ranger_button.set_pressed_no_signal(build_mode == "ranger_hut")
+	mead_button.set_pressed_no_signal(build_mode == "mead_hall")
+	herbalist_button.set_pressed_no_signal(build_mode == "herbalist_grove")
 	var kinds := {"farm": farm_button, "house": house_button, "guardhouse": guard_button,
-		"tavern": tavern_button, "market": market_button, "shrine": shrine_button}
+		"tavern": tavern_button, "market": market_button, "shrine": shrine_button,
+		"blacksmith": blacksmith_button, "wizard_tower": wizard_button,
+		"ranger_hut": ranger_button, "mead_hall": mead_button,
+		"herbalist_grove": herbalist_button}
 	for kind in kinds:
 		var btn: Button = kinds[kind]
 		btn.disabled = sim.gold < sim.BUILD_COSTS[kind]
@@ -188,8 +290,8 @@ func _layout_inspect_panel() -> void:
 		var h := minf(240.0, vp.y / 3.0)
 		inspect_panel.offset_left = 12.0
 		inspect_panel.offset_right = -12.0
-		inspect_panel.offset_top = -h - 210.0
-		inspect_panel.offset_bottom = -210.0
+		inspect_panel.offset_top = -h - 270.0
+		inspect_panel.offset_bottom = -270.0
 
 func _agents_here(p: Vector2i) -> Array:
 	# Goblins and wild creatures in ground no one has charted stay hidden
@@ -205,6 +307,10 @@ func _agents_here(p: Vector2i) -> Array:
 	return here
 
 func _inspect(p: Vector2i) -> void:
+	# A click anywhere on a multi-tile structure inspects the whole building.
+	var origin: Vector2i = sim.building_origin_at(p)
+	if origin.x >= 0:
+		p = origin
 	var known: bool = sim.explored_at(p)
 	var b = sim.buildings.get(p)
 	var den = sim.dens.get(p) if known else null
@@ -251,8 +357,17 @@ func _fill_tile_inspect(b, den, pile_gold: int) -> void:
 		inspect_status.text = Descriptions.terrain_status(t, sim, selected_tile)
 
 func _refresh_action(p: Vector2i, den) -> void:
-	# One-tap actions live on the inspector card: bounty flags on any lair
-	# the realm can reach, and terrain work on charted marsh or woods.
+	# One-tap actions live on the inspector card: demolition for friendly
+	# buildings (except the Palace), bounty flags on lairs, and terrain work.
+	var b: Dictionary = sim.buildings.get(p, {})
+	if not b.is_empty():
+		if b.kind == "castle":
+			inspect_action.visible = false
+		else:
+			inspect_action.text = "Demolish %s" % Descriptions.building_title(b.kind)
+			inspect_action.visible = true
+			inspect_action.disabled = false
+		return
 	if den != null:
 		if not dens_reachable(p):
 			inspect_action.visible = false
@@ -288,14 +403,24 @@ func dens_reachable(p: Vector2i) -> bool:
 	return sim.find_path(sim.den_doorstep(p, sim.keep_pos), sim.keep_pos).size() > 0
 
 func _on_inspect_action() -> void:
+	if selected_unit != null:
+		if selected_unit.kind == "hero":
+			sim.dismiss_hero(selected_unit)
+			_refresh_world_views()
+		return
 	if selected_tile.x < 0:
 		return
-	if sim.dens.has(selected_tile):
+	if sim.buildings.has(selected_tile):
+		sim.demolish_building(selected_tile)
+	elif sim.dens.has(selected_tile):
 		sim.post_bounty(selected_tile)
 	elif sim.world.get_terrain(selected_tile) == sim.world.SWAMP:
 		sim.drain_swamp(selected_tile)
 	elif sim.world.get_terrain(selected_tile) == sim.world.FOREST:
 		sim.clear_forest(selected_tile)
+	_refresh_world_views()
+
+func _refresh_world_views() -> void:
 	map_view.queue_redraw()
 	minimap.queue_redraw()
 	_refresh()
@@ -311,7 +436,14 @@ func _inspect_agent(a) -> void:
 	var here := _agents_here(selected_tile)
 	here.erase(a)
 	_show_units(here, false)
-	inspect_action.visible = false
+	if a.kind == "hero":
+		var leaving: bool = a.purpose == "leave" or a.goal == "leave" \
+			or sim._removals.has(a)
+		inspect_action.text = "Leaving the realm" if leaving else "Dismiss hero"
+		inspect_action.visible = true
+		inspect_action.disabled = leaving
+	else:
+		inspect_action.visible = false
 
 func _show_units(here: Array, include_first: bool) -> void:
 	var lines := []
@@ -362,6 +494,50 @@ func _close_inspect() -> void:
 	inspect_action.visible = false
 	map_view.queue_redraw()
 
+# --- Two-tap placement (mobile-friendly) ---------------------------------
+
+func _build_placement_panel() -> void:
+	placement_panel = PanelContainer.new()
+	placement_panel.name = "PlacementPanel"
+	placement_panel.visible = false
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	placement_label = Label.new()
+	placement_label.add_theme_font_size_override("font_size", 20)
+	placement_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	placement_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	placement_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	placement_confirm = Button.new()
+	placement_confirm.text = "✓ Place"
+	placement_confirm.custom_minimum_size = Vector2(118, 52)
+	placement_confirm.add_theme_font_size_override("font_size", 22)
+	placement_confirm.pressed.connect(_confirm_placement)
+	var cancel := Button.new()
+	cancel.text = "✕"
+	cancel.custom_minimum_size = Vector2(52, 52)
+	cancel.add_theme_font_size_override("font_size", 22)
+	cancel.pressed.connect(_cancel_placement)
+	row.add_child(placement_label)
+	row.add_child(placement_confirm)
+	row.add_child(cancel)
+	placement_panel.add_child(row)
+	get_node("UI/Root").add_child(placement_panel)
+	_layout_placement_panel()
+
+func _layout_placement_panel() -> void:
+	if placement_panel == null:
+		return
+	var vp := get_viewport_rect().size
+	var w := minf(430.0, vp.x - 32.0)
+	placement_panel.anchor_left = 0.5
+	placement_panel.anchor_right = 0.5
+	placement_panel.anchor_top = 1.0
+	placement_panel.anchor_bottom = 1.0
+	placement_panel.offset_left = -w / 2.0
+	placement_panel.offset_right = w / 2.0
+	placement_panel.offset_top = -336.0
+	placement_panel.offset_bottom = -270.0
+
 # --- Event log (bottom-left) ---------------------------------------------
 
 func _build_event_log() -> void:
@@ -381,8 +557,8 @@ func _build_event_log() -> void:
 	log_button.anchor_bottom = 1.0
 	log_button.offset_left = 16.0
 	log_button.offset_right = 126.0
-	log_button.offset_top = -272.0
-	log_button.offset_bottom = -216.0
+	log_button.offset_top = -324.0
+	log_button.offset_bottom = -268.0
 
 	log_panel = PanelContainer.new()
 	log_panel.name = "LogPanel"
@@ -420,21 +596,22 @@ func _layout_event_log() -> void:
 		return
 	var vp := get_viewport_rect().size
 	var w := minf(460.0, vp.x - 32.0)
-	var h := minf(340.0, maxf(140.0, vp.y - 296.0))
+	var h := minf(340.0, maxf(140.0, vp.y - 348.0))
 	log_panel.anchor_left = 0.0
 	log_panel.anchor_right = 0.0
 	log_panel.anchor_top = 1.0
 	log_panel.anchor_bottom = 1.0
 	log_panel.offset_left = 16.0
 	log_panel.offset_right = 16.0 + w
-	log_panel.offset_bottom = -284.0
-	log_panel.offset_top = -284.0 - h
+	log_panel.offset_bottom = -336.0
+	log_panel.offset_top = -336.0 - h
 	log_text.custom_minimum_size = Vector2(0, h - 64.0)
 
 func _toggle_event_log() -> void:
 	if log_panel.visible:
 		_close_event_log()
 		return
+	_close_hero_roster()
 	log_panel.visible = true
 	log_button.set_pressed_no_signal(true)
 	_rebuild_event_log()
@@ -468,6 +645,117 @@ func _refresh_event_log() -> void:
 			continue
 		log_text.append_text("[color=#8f8f8f]%d[/color]  %s\n" % [int(e.tick), e.text])
 		log_last_id = int(e.id)
+
+# --- Hero roster -----------------------------------------------------------
+
+func _build_hero_roster() -> void:
+	hero_roster_panel = PanelContainer.new()
+	hero_roster_panel.name = "HeroRosterPanel"
+	hero_roster_panel.visible = false
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 6)
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 12)
+	var title := Label.new()
+	title.text = "Hero Roster"
+	title.add_theme_font_size_override("font_size", 26)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var close := Button.new()
+	close.text = "X"
+	close.add_theme_font_size_override("font_size", 22)
+	close.pressed.connect(_close_hero_roster)
+	top.add_child(title)
+	top.add_child(close)
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	hero_roster_list = VBoxContainer.new()
+	hero_roster_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hero_roster_list.add_theme_constant_override("separation", 6)
+	scroll.add_child(hero_roster_list)
+	vb.add_child(top)
+	vb.add_child(scroll)
+	hero_roster_panel.add_child(vb)
+	get_node("UI/Root").add_child(hero_roster_panel)
+	_layout_hero_roster()
+
+func _layout_hero_roster() -> void:
+	if hero_roster_panel == null:
+		return
+	var vp := get_viewport_rect().size
+	var w := minf(560.0, vp.x - 32.0)
+	var h := minf(430.0, maxf(220.0, vp.y - 160.0))
+	hero_roster_panel.anchor_left = 0.5
+	hero_roster_panel.anchor_right = 0.5
+	hero_roster_panel.anchor_top = 0.5
+	hero_roster_panel.anchor_bottom = 0.5
+	hero_roster_panel.offset_left = -w / 2.0
+	hero_roster_panel.offset_right = w / 2.0
+	hero_roster_panel.offset_top = -h / 2.0
+	hero_roster_panel.offset_bottom = h / 2.0
+
+func _toggle_hero_roster() -> void:
+	if hero_roster_panel.visible:
+		_close_hero_roster()
+		return
+	_close_inspect()
+	_close_event_log()
+	hero_roster_panel.visible = true
+	_refresh_hero_roster()
+
+func _close_hero_roster() -> void:
+	if hero_roster_panel == null:
+		return
+	hero_roster_panel.visible = false
+
+func _refresh_hero_roster() -> void:
+	if hero_roster_panel == null or not hero_roster_panel.visible:
+		return
+	var roster: Array = sim.hero_roster()
+	var ids := []
+	for a in roster:
+		ids.append(str(a.get_instance_id()))
+	var signature := ",".join(ids)
+	if signature != hero_roster_signature:
+		hero_roster_signature = signature
+		_rebuild_hero_roster(roster)
+	if roster.is_empty():
+		return
+	for i in roster.size():
+		var row := hero_roster_list.get_child(i) as Button
+		if row != null:
+			row.text = _hero_roster_line(roster[i])
+
+func _rebuild_hero_roster(roster: Array) -> void:
+	for child in hero_roster_list.get_children():
+		hero_roster_list.remove_child(child)
+		child.queue_free()
+	if roster.is_empty():
+		var empty := Label.new()
+		empty.text = "No heroes serve the realm yet."
+		empty.add_theme_font_size_override("font_size", 20)
+		empty.add_theme_color_override("font_color", Color(0.56, 0.56, 0.56))
+		hero_roster_list.add_child(empty)
+		return
+	for a in roster:
+		var row := Button.new()
+		row.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		row.custom_minimum_size = Vector2(0, 46)
+		row.add_theme_font_size_override("font_size", 20)
+		row.text = _hero_roster_line(a)
+		row.pressed.connect(_on_roster_hero_pressed.bind(a))
+		hero_roster_list.add_child(row)
+
+func _hero_roster_line(a) -> String:
+	return "%s — %s" % [Descriptions.unit_title(a), Descriptions.agent_activity(a)]
+
+func _on_roster_hero_pressed(a) -> void:
+	if not sim.agents.has(a):
+		return
+	_close_hero_roster()
+	selected_unit = a
+	_inspect_agent(a)
+	map_view.queue_redraw()
 
 # --- Dev tools: sim speed (1-3x), fog of war toggle --------------------------
 

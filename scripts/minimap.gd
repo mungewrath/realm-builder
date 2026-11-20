@@ -58,12 +58,14 @@ func _draw() -> void:
 			draw_rect(Rect2(Vector2(x * PX, y * PX), Vector2(PX, PX)), TERRAIN_COLORS[t])
 	var buildings: Dictionary = sim.buildings
 	for p in buildings:
-		if sim.fog_enabled and sim.explored[p.y * world.SIZE_X + p.x] == 0:
-			continue
+		var kind: String = buildings[p].kind
 		var col := Color(0.2, 0.2, 0.2)
-		if buildings[p].kind == "castle":
+		if kind == "castle":
 			col = GOLD
-		draw_rect(Rect2(Vector2(p) * PX, Vector2(PX, PX)), col)
+		for q in sim.building_tiles(p, kind):
+			if sim.fog_enabled and sim.explored[q.y * world.SIZE_X + q.x] == 0:
+				continue
+			draw_rect(Rect2(Vector2(q) * PX, Vector2(PX, PX)), col)
 	if sim.get("dens") != null:
 		for p in sim.dens:
 			# Landmarks appear on the minimap only once charted. Hostile

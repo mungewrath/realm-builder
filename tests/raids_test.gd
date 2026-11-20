@@ -33,6 +33,8 @@ func _make_sim(seed_value: int):
 	var sim = load("res://scripts/kingdom.gd").new()
 	sim.wild_ecology = false # warband accounting; ecology has its own suite
 	sim.attach_world(WorldC)
+	sim.building_padding = false
+	sim.building_footprints = false # existing fixtures stay 1x1; footprint checks live in sim_test
 	sim.set_fog_enabled(false) # warband accounting without fog gates
 	sim.keep_trickle = 0 # exact gold accounting; trickle has its own check
 	# Heroes (M4) have their own suite: warrior attraction would muddy the

@@ -33,6 +33,8 @@ func _make_sim(seed_value: int):
 	var sim = load("res://scripts/kingdom.gd").new()
 	sim.wild_ecology = true
 	sim.attach_world(WorldC)
+	sim.building_padding = false
+	sim.building_footprints = false # existing fixtures stay 1x1; footprint checks live in sim_test
 	sim.set_fog_enabled(false)
 	sim.keep_trickle = 0
 	sim.heroes_enabled = false

@@ -12,6 +12,7 @@ func _initialize() -> void:
 	_test_seeded_lairs()
 	_test_prey_regrowth()
 	_test_wolf_hunt_chain()
+	_test_predator_appetite()
 	_test_spider_chain()
 	_test_wolf_migration()
 	_test_starvation()
@@ -36,6 +37,8 @@ func _make_sim(seed_value: int, fog_on := false):
 	var sim = load("res://scripts/kingdom.gd").new()
 	sim.wild_ecology = true # this is the ecology suite
 	sim.attach_world(WorldC)
+	sim.building_padding = false
+	sim.building_footprints = false # existing fixtures stay 1x1; footprint checks live in sim_test
 	if not fog_on:
 		sim.set_fog_enabled(false) # deterministic accounting without fog gates
 	sim.keep_trickle = 0 # exact gold accounting; trickle has its own check
@@ -161,6 +164,37 @@ func _test_wolf_hunt_chain() -> void:
 		_fail("the kill never reached the wolf den's larder")
 	if sim.hunts_made < 1:
 		_fail("hunt not accounted")
+
+func _test_predator_appetite() -> void:
+	# A pack hunts as soon as its larder thins; a starving pack sends a
+	# second hunter instead of waiting for the first to return.
+	var sim = _make_sim(341)
+	_quiet_wilds(sim)
+	var wolves: Array = _dens_of_kind(sim, "wolf_den")
+	var warrens: Array = _dens_of_kind(sim, "rabbit_warren")
+	if wolves.is_empty() or warrens.is_empty():
+		_fail("appetite test lacks its dens")
+		return
+	var wd: Vector2i = wolves[0]
+	sim.dens[warrens[0]].food = 8
+	var pack := []
+	for a in _creatures(sim):
+		if a.home == wd and a.species == "wolf":
+			pack.append(a)
+	if pack.size() < 2:
+		_fail("wolf pack too small for appetite test")
+		return
+	sim.dens[wd].food = sim.PREDATOR_HUNGRY_FOOD
+	sim._roll_creature_behavior(pack[0])
+	if pack[0].purpose != "hunt":
+		_fail("hungry wolf did not set out to hunt")
+	sim._roll_creature_behavior(pack[1])
+	if pack[1].purpose == "hunt":
+		_fail("fed-off pack sent two hunters at the hungry mark")
+	sim.dens[wd].food = sim.PREDATOR_STARVING_FOOD
+	sim._roll_creature_behavior(pack[1])
+	if pack[1].purpose != "hunt":
+		_fail("starving pack did not send its second hunter")
 
 func _test_spider_chain() -> void:
 	# Goblins → giant spiders: the nest snares a goblin den's stores.

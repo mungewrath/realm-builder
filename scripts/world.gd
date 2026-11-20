@@ -20,6 +20,10 @@ const DIRS_ALL := [
 
 var tiles := PackedByteArray()
 var rng := RandomNumberGenerator.new()
+# Godot's native A* handles real travel routes in C++; the scripted BFS is
+# kept for depth-capped speculative searches (hero target probes).
+var _astar: AStarGrid2D
+var _astar_dirty := true
 
 func generate(seed_value: int) -> void:
 	rng.seed = seed_value
@@ -105,6 +109,7 @@ func get_terrain(p: Vector2i) -> int:
 func set_terrain(p: Vector2i, t: int) -> void:
 	if in_bounds(p):
 		tiles[p.y * SIZE_X + p.x] = t
+		_astar_dirty = true
 
 func in_bounds(p: Vector2i) -> bool:
 	return p.x >= 0 and p.y >= 0 and p.x < SIZE_X and p.y < SIZE_Y
@@ -116,24 +121,49 @@ func _walkable(p: Vector2i) -> bool:
 	var t := get_terrain(p)
 	return t == GRASS or t == FOREST or t == SWAMP
 
-func find_path(from: Vector2i, to: Vector2i) -> Array:
-	# BFS on walkable tiles (8-directional so routes cut diagonally instead
-	# of marching all the way down one axis, then the other); returns tile
-	# list from after `from` to `to`. Exits the moment the target is
-	# reached — without that, every hop floods the whole map and the Pi
-	# drowns in pathfinding.
+func _ensure_astar() -> void:
+	if _astar != null and not _astar_dirty:
+		return
+	if _astar == null:
+		_astar = AStarGrid2D.new()
+		_astar.region = Rect2i(0, 0, SIZE_X, SIZE_Y)
+		_astar.cell_size = Vector2.ONE
+		_astar.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
+		_astar.update()
+	for y in SIZE_Y:
+		for x in SIZE_X:
+			var p := Vector2i(x, y)
+			_astar.set_point_solid(p, not _walkable(p))
+	_astar_dirty = false
+
+func find_path(from: Vector2i, to: Vector2i, max_depth := -1) -> Array:
+	# Real travel uses Godot's native A*; a non-negative `max_depth` asks for
+	# a small speculative BFS instead (hero target probes) so those never
+	# flood the map. Both return the tile list after `from` through `to`.
 	var result: Array = []
 	if from == to or not in_bounds(to) or not _walkable(from) or not _walkable(to):
 		return result
+	if max_depth == 0:
+		return result
 	if _adjacent_walk(from, to):
 		return [to]
+	if max_depth < 0:
+		_ensure_astar()
+		var routed: Array = _astar.get_id_path(from, to)
+		if not routed.is_empty():
+			routed.pop_front()
+		return routed
 	var prev := {}
+	var depth := {from: 0}
 	prev[from] = from
 	var queue: Array = [from]
 	var head := 0
 	while head < queue.size():
 		var cur: Vector2i = queue[head]
 		head += 1
+		var next_depth: int = int(depth[cur]) + 1
+		if max_depth >= 0 and next_depth > max_depth:
+			continue
 		for d in DIRS_ALL:
 			var n: Vector2i = cur + d
 			if not in_bounds(n) or prev.has(n) or not _walkable(n):
@@ -144,6 +174,7 @@ func find_path(from: Vector2i, to: Vector2i) -> Array:
 						or not _walkable(cur + Vector2i(0, d.y)):
 					continue
 			prev[n] = cur
+			depth[n] = next_depth
 			if n == to:
 				cur = n
 				while cur != from:

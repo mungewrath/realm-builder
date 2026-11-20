@@ -24,6 +24,11 @@ const BUILDING_COLORS := {
 	"tavern": Color(0.45, 0.3, 0.18),
 	"market": Color(0.55, 0.42, 0.26),
 	"shrine": Color(0.8, 0.78, 0.72),
+	"blacksmith": Color(0.42, 0.38, 0.4),
+	"wizard_tower": Color(0.45, 0.36, 0.62),
+	"ranger_hut": Color(0.34, 0.46, 0.28),
+	"mead_hall": Color(0.62, 0.45, 0.24),
+	"herbalist_grove": Color(0.38, 0.62, 0.36),
 }
 
 const HERO_COLORS := {
@@ -31,6 +36,10 @@ const HERO_COLORS := {
 	"warrior": Color(0.75, 0.4, 0.3),
 	"paladin": Color(0.9, 0.85, 0.55),
 	"druid": Color(0.4, 0.7, 0.45),
+	"dwarf": Color(0.65, 0.52, 0.36),
+	"wizard": Color(0.45, 0.5, 0.85),
+	"ranger": Color(0.42, 0.62, 0.32),
+	"barbarian": Color(0.78, 0.38, 0.2),
 }
 
 const GOLD := Color(0.92, 0.78, 0.2)
@@ -40,6 +49,13 @@ var world
 var sim
 var buildings := {}
 var selected := Vector2i(-1, -1)
+
+# Placement preview: a translucent ghost of the selected building plus its
+# one-tile padding ring. Green means the tile can be confirmed; red means
+# blocked by terrain, fog, another structure, or the treasury.
+var placement_kind := ""
+var placement_tile := Vector2i(-1, -1)
+var placement_valid := false
 
 var _mouse_down := false
 var _mouse_moved := false
@@ -55,6 +71,12 @@ func setup(w, sim_ref) -> void:
 	world = w
 	sim = sim_ref
 	buildings = sim.buildings
+	queue_redraw()
+
+func set_placement(kind: String, p: Vector2i, valid: bool) -> void:
+	placement_kind = kind
+	placement_tile = p
+	placement_valid = valid
 	queue_redraw()
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -205,8 +227,38 @@ func _draw() -> void:
 			_draw_loot_pile(p)
 	if sim != null:
 		_draw_agents()
+	_draw_placement()
 	if selected.x >= 0:
-		draw_rect(Rect2(Vector2(selected * TILE), Vector2(TILE - 1, TILE - 1)), Color(0.95, 0.8, 0.3), false, 2.0)
+		var sel_rect := Rect2i(selected, Vector2i.ONE)
+		if sim != null:
+			var origin: Vector2i = sim.building_origin_at(selected)
+			if origin.x >= 0:
+				sel_rect = sim.building_rect(origin, sim.buildings[origin].kind)
+		draw_rect(Rect2(Vector2(sel_rect.position * TILE),
+			Vector2(sel_rect.size * TILE) - Vector2(1, 1)),
+			Color(0.95, 0.8, 0.3), false, 2.0)
+
+func _draw_placement() -> void:
+	if placement_kind == "" or placement_tile.x < 0:
+		return
+	var rect: Rect2i = sim.building_rect(placement_tile, placement_kind) \
+		if sim != null else Rect2i(placement_tile, Vector2i.ONE)
+	var origin := Vector2(rect.position * TILE)
+	var footprint := Vector2(rect.size * TILE)
+	var tint := Color(0.35, 0.95, 0.45) if placement_valid \
+		else Color(1.0, 0.28, 0.22)
+	# Outline the footprint plus the required one-tile breathing room.
+	var pad_origin := origin - Vector2(TILE, TILE)
+	var pad_size := footprint + Vector2(TILE * 2, TILE * 2)
+	draw_rect(Rect2(pad_origin, pad_size),
+		Color(tint.r, tint.g, tint.b, 0.12), true)
+	draw_rect(Rect2(pad_origin, pad_size),
+		Color(tint.r, tint.g, tint.b, 0.65), false, 2.0)
+	_draw_building(placement_tile, {"kind": placement_kind, "complete": true})
+	draw_rect(Rect2(origin, footprint - Vector2(1, 1)),
+		Color(tint.r, tint.g, tint.b, 0.38), true)
+	draw_rect(Rect2(origin + Vector2(1, 1), footprint - Vector2(3, 3)),
+		tint, false, 2.0)
 
 func _fog_level(p: Vector2i) -> int:
 	# 0 unseen, 2 revealed (revealed ground stays lit permanently).
@@ -272,65 +324,135 @@ func _draw_mountain(origin: Vector2, x: int, y: int) -> void:
 	draw_colored_polygon(cap, Color(0.85, 0.85, 0.85))
 
 func _draw_building(p: Vector2i, b: Dictionary) -> void:
-	if not b.complete:
-		_draw_site(p, b.kind)
-		return
 	var kind: String = b.kind
-	var origin := Vector2(p.x * TILE, p.y * TILE)
+	if not b.complete:
+		_draw_site(p, kind)
+		return
+	var rect: Rect2i = sim.building_rect(p, kind) if sim != null \
+		else Rect2i(p, Vector2i.ONE)
+	var origin := Vector2(rect.position * TILE)
+	var w := float(rect.size.x * TILE)
+	var h := float(rect.size.y * TILE)
 	match kind:
 		"farm":
-			draw_rect(Rect2(origin + Vector2(4, 10), Vector2(TILE - 8, TILE - 16)), BUILDING_COLORS[kind])
-			draw_rect(Rect2(origin + Vector2(4, 14), Vector2(TILE - 8, 3)), Color(0.55, 0.75, 0.3))
-			draw_rect(Rect2(origin + Vector2(4, 20), Vector2(TILE - 8, 3)), Color(0.55, 0.75, 0.3))
+			draw_rect(Rect2(origin + Vector2(4, 10), Vector2(w - 8, h - 16)), BUILDING_COLORS[kind])
+			draw_rect(Rect2(origin + Vector2(4, 14), Vector2(w - 8, 3)), Color(0.55, 0.75, 0.3))
+			draw_rect(Rect2(origin + Vector2(4, 20), Vector2(w - 8, 3)), Color(0.55, 0.75, 0.3))
 		"house":
-			draw_rect(Rect2(origin + Vector2(6, 14), Vector2(TILE - 12, TILE - 18)), BUILDING_COLORS[kind])
+			draw_rect(Rect2(origin + Vector2(6, 14), Vector2(w - 12, h - 18)), BUILDING_COLORS[kind])
 			var roof := PackedVector2Array([
-				origin + Vector2(TILE / 2.0, 4), origin + Vector2(4, 15), origin + Vector2(TILE - 4, 15),
+				origin + Vector2(w / 2.0, 4), origin + Vector2(4, 15), origin + Vector2(w - 4, 15),
 			])
 			draw_colored_polygon(roof, Color(0.35, 0.18, 0.12))
 		"castle":
-			draw_rect(Rect2(origin + Vector2(2, 2), Vector2(TILE - 4, TILE - 4)), BUILDING_COLORS[kind])
-			for n in 3:
-				draw_rect(Rect2(origin + Vector2(4 + n * 8, -2), Vector2(5, 6)), BUILDING_COLORS[kind])
-			draw_line(origin + Vector2(TILE / 2.0, -4), origin + Vector2(TILE / 2.0, -14), Color(0.2, 0.2, 0.2), 2.0)
+			# A walled keep: corner towers, crenellations, a central hall and
+			# a gate wide enough for the realm's folk.
+			draw_rect(Rect2(origin + Vector2(4, 4), Vector2(w - 8, h - 8)), BUILDING_COLORS[kind])
+			for n in 7:
+				draw_rect(Rect2(origin + Vector2(6 + n * 12, 0), Vector2(7, 8)), BUILDING_COLORS[kind])
+			for corner in [Vector2(4, 4), Vector2(w - 22, 4), Vector2(4, h - 22), Vector2(w - 22, h - 22)]:
+				draw_rect(Rect2(origin + corner, Vector2(18, 18)), Color(0.64, 0.6, 0.5))
+			draw_rect(Rect2(origin + Vector2(w / 2.0 - 16, h / 2.0 - 18), Vector2(32, 34)),
+				Color(0.66, 0.62, 0.53))
+			draw_rect(Rect2(origin + Vector2(w / 2.0 - 11, h - 28), Vector2(22, 26)),
+				Color(0.25, 0.22, 0.2))
+			var pole := origin + Vector2(w / 2.0, h / 2.0 - 18)
+			draw_line(pole, pole + Vector2(0, -22), Color(0.2, 0.2, 0.2), 2.0)
 			var flag := PackedVector2Array([
-				origin + Vector2(TILE / 2.0, -14), origin + Vector2(TILE / 2.0 + 8, -11), origin + Vector2(TILE / 2.0, -8),
+				pole + Vector2(0, -22), pole + Vector2(10, -18), pole + Vector2(0, -14),
 			])
 			draw_colored_polygon(flag, Color(0.75, 0.2, 0.2))
 		"guardhouse":
-			# Stone watch-tower with a pale-blue banner.
-			draw_rect(Rect2(origin + Vector2(5, 10), Vector2(TILE - 10, TILE - 12)), BUILDING_COLORS[kind])
-			draw_rect(Rect2(origin + Vector2(3, 6), Vector2(TILE - 6, 6)), BUILDING_COLORS[kind])
-			for n in 2:
-				draw_rect(Rect2(origin + Vector2(6 + n * 12, 3), Vector2(4, 4)), BUILDING_COLORS[kind])
-			draw_rect(Rect2(origin + Vector2(TILE / 2.0 - 2, 16), Vector2(4, TILE - 18)), Color(0.3, 0.3, 0.34))
-			draw_line(origin + Vector2(TILE / 2.0 + 5, 8), origin + Vector2(TILE / 2.0 + 5, -6), Color(0.2, 0.2, 0.2), 2.0)
+			# Stone watchtower and a short wall, with a pale-blue banner.
+			draw_rect(Rect2(origin + Vector2(4, 12), Vector2(w - 8, h - 16)), BUILDING_COLORS[kind])
+			draw_rect(Rect2(origin + Vector2(8, 6), Vector2(24, h - 10)), BUILDING_COLORS[kind])
+			for n in 3:
+				draw_rect(Rect2(origin + Vector2(9 + n * 8, 2), Vector2(5, 6)), BUILDING_COLORS[kind])
+			draw_rect(Rect2(origin + Vector2(17, h - 15), Vector2(7, h - 17)),
+				Color(0.3, 0.3, 0.34))
+			var pole := origin + Vector2(w - 14, 10)
+			draw_line(pole, pole + Vector2(0, -14), Color(0.2, 0.2, 0.2), 2.0)
 			var pennant := PackedVector2Array([
-				origin + Vector2(TILE / 2.0 + 5, -6), origin + Vector2(TILE / 2.0 + 13, -3), origin + Vector2(TILE / 2.0 + 5, 0),
+				pole + Vector2(0, -14), pole + Vector2(9, -11), pole + Vector2(0, -8),
 			])
 			draw_colored_polygon(pennant, Color(0.45, 0.6, 0.85))
 		"tavern":
 			# Timber hall with a pitched roof and a hanging ale sign.
-			draw_rect(Rect2(origin + Vector2(4, 14), Vector2(TILE - 8, TILE - 18)), BUILDING_COLORS[kind])
+			draw_rect(Rect2(origin + Vector2(4, 14), Vector2(w - 8, h - 18)), BUILDING_COLORS[kind])
 			var roof := PackedVector2Array([
-				origin + Vector2(TILE / 2.0, 4), origin + Vector2(3, 15), origin + Vector2(TILE - 3, 15),
+				origin + Vector2(w / 2.0, 2), origin + Vector2(2, 15), origin + Vector2(w - 2, 15),
 			])
 			draw_colored_polygon(roof, Color(0.3, 0.2, 0.12))
-			draw_line(origin + Vector2(6, 10), origin + Vector2(13, 10), Color(0.25, 0.18, 0.12), 2.0)
-			draw_rect(Rect2(origin + Vector2(7, 10), Vector2(5, 6)), GOLD)
-			draw_rect(Rect2(origin + Vector2(7, 16), Vector2(2, 2)), Color(0.85, 0.85, 0.85))
+			draw_line(origin + Vector2(6, 10), origin + Vector2(14, 10), Color(0.25, 0.18, 0.12), 2.0)
+			draw_rect(Rect2(origin + Vector2(w - 23, 8), Vector2(6, 8)), GOLD)
+			draw_rect(Rect2(origin + Vector2(w - 22, 16), Vector2(3, 3)), Color(0.85, 0.85, 0.85))
+			draw_rect(Rect2(origin + Vector2(w / 2.0 - 5, h - 15), Vector2(10, 13)),
+				Color(0.32, 0.21, 0.13))
 		"market":
-			# Stall with a striped awning.
-			draw_rect(Rect2(origin + Vector2(5, 14), Vector2(TILE - 10, TILE - 18)), BUILDING_COLORS[kind])
-			for n in 4:
+			# A wider stall with a striped awning and coin scale.
+			draw_rect(Rect2(origin + Vector2(5, 15), Vector2(w - 10, h - 19)), BUILDING_COLORS[kind])
+			for n in int(w / 7.0):
 				var stripe := Color(0.85, 0.25, 0.2) if n % 2 == 0 else Color(0.92, 0.88, 0.8)
 				draw_rect(Rect2(origin + Vector2(3 + n * 7, 8), Vector2(7, 6)), stripe)
-			draw_circle(Vector2(origin.x + TILE / 2.0, origin.y + 19), 2.5, GOLD)
+			draw_circle(origin + Vector2(w / 2.0, h - 10), 3.0, GOLD)
 		"shrine":
-			# Pale stone altar with a burning light.
-			draw_rect(Rect2(origin + Vector2(8, 12), Vector2(TILE - 16, TILE - 16)), BUILDING_COLORS[kind])
-			draw_rect(Rect2(origin + Vector2(4, TILE - 10), Vector2(TILE - 8, 6)), Color(0.7, 0.68, 0.62))
-			draw_circle(Vector2(origin.x + TILE / 2.0, origin.y + 12), 3.0, GOLD)
+			# Pale stone altar with a burning light, approached by wide steps.
+			draw_rect(Rect2(origin + Vector2(4, h - 11), Vector2(w - 8, 7)), Color(0.7, 0.68, 0.62))
+			draw_rect(Rect2(origin + Vector2(w / 2.0 - 12, 13), Vector2(24, h - 23)),
+				BUILDING_COLORS[kind])
+			draw_rect(Rect2(origin + Vector2(w / 2.0 - 4, 8), Vector2(8, 9)), Color(0.92, 0.9, 0.84))
+			draw_circle(origin + Vector2(w / 2.0, 9), 3.5, GOLD)
+		"blacksmith":
+			# Squat forge with a hot orange mouth and a smoking chimney.
+			draw_rect(Rect2(origin + Vector2(4, 12), Vector2(w - 8, h - 16)), BUILDING_COLORS[kind])
+			draw_rect(Rect2(origin + Vector2(w / 2.0 - 8, 17), Vector2(16, 8)),
+				Color(0.95, 0.48, 0.16))
+			draw_rect(Rect2(origin + Vector2(w - 18, 2), Vector2(6, 13)), Color(0.28, 0.26, 0.28))
+			draw_circle(origin + Vector2(w - 15, 1), 3.5, Color(0.4, 0.4, 0.42, 0.7))
+			draw_rect(Rect2(origin + Vector2(8, h - 11), Vector2(12, 5)), Color(0.34, 0.32, 0.34))
+		"wizard_tower":
+			# Tall violet spire with a glowing star, now two tiles deep.
+			draw_rect(Rect2(origin + Vector2(9, 22), Vector2(w - 18, h - 28)), BUILDING_COLORS[kind])
+			var spire := PackedVector2Array([
+				origin + Vector2(w / 2.0, 0), origin + Vector2(6, 24), origin + Vector2(w - 6, 24),
+			])
+			draw_colored_polygon(spire, Color(0.32, 0.26, 0.48))
+			draw_circle(origin + Vector2(w / 2.0, 34), 3.0, Color(0.9, 0.85, 0.95))
+			draw_rect(Rect2(origin + Vector2(w / 2.0 - 4, h - 19), Vector2(8, 15)),
+				Color(0.25, 0.2, 0.36))
+		"ranger_hut":
+			# Low cabin with a small bow-and-leaf mark.
+			draw_rect(Rect2(origin + Vector2(5, 15), Vector2(w - 10, h - 19)), BUILDING_COLORS[kind])
+			var thatch := PackedVector2Array([
+				origin + Vector2(w / 2.0, 5), origin + Vector2(3, 17), origin + Vector2(w - 3, 17),
+			])
+			draw_colored_polygon(thatch, Color(0.34, 0.3, 0.16))
+			draw_line(origin + Vector2(w - 14, 9), origin + Vector2(w - 8, 3), Color(0.55, 0.4, 0.2), 1.5)
+			draw_circle(origin + Vector2(9, 10), 2.4, Color(0.45, 0.72, 0.35))
+		"mead_hall":
+			# Longhouse with horns over the door.
+			draw_rect(Rect2(origin + Vector2(3, 14), Vector2(w - 6, h - 18)), BUILDING_COLORS[kind])
+			var long_roof := PackedVector2Array([
+				origin + Vector2(4, 15), origin + Vector2(w / 2.0, 3), origin + Vector2(w - 4, 15),
+			])
+			draw_colored_polygon(long_roof, Color(0.38, 0.25, 0.14))
+			draw_line(origin + Vector2(9, 18), origin + Vector2(14, 14), Color(0.9, 0.85, 0.7), 2.0)
+			draw_line(origin + Vector2(w - 9, 18), origin + Vector2(w - 14, 14), Color(0.9, 0.85, 0.7), 2.0)
+		"herbalist_grove":
+			# A wide green hut ringed by herb rows and two little trees.
+			var hut_x := w / 2.0 - 13
+			draw_rect(Rect2(origin + Vector2(hut_x, 30), Vector2(26, h - 35)), BUILDING_COLORS[kind])
+			var grove_roof := PackedVector2Array([
+				origin + Vector2(w / 2.0, 12), origin + Vector2(hut_x - 5, 32),
+				origin + Vector2(hut_x + 31, 32),
+			])
+			draw_colored_polygon(grove_roof, Color(0.2, 0.4, 0.2))
+			for n in 4:
+				draw_circle(origin + Vector2(8 + n * 16, h - 8), 2.2, Color(0.55, 0.8, 0.4))
+			draw_circle(origin + Vector2(10, 16), 7.0, Color(0.22, 0.42, 0.2))
+			draw_rect(Rect2(origin + Vector2(9, 22), Vector2(2, 8)), Color(0.3, 0.2, 0.1))
+			draw_circle(origin + Vector2(w - 10, 16), 7.0, Color(0.22, 0.42, 0.2))
+			draw_rect(Rect2(origin + Vector2(w - 11, 22), Vector2(2, 8)), Color(0.3, 0.2, 0.1))
 
 func _draw_den(p: Vector2i, den: Dictionary) -> void:
 	var kind_key: String = den.get("kind", "goblin_den")
@@ -512,12 +634,16 @@ func _draw_loot_pile(p: Vector2i) -> void:
 	draw_circle(origin + Vector2(12, 17), 2.0, Color(0.75, 0.6, 0.12))
 
 func _draw_site(p: Vector2i, kind: String) -> void:
-	var origin := Vector2(p.x * TILE, p.y * TILE)
+	var rect: Rect2i = sim.building_rect(p, kind) if sim != null \
+		else Rect2i(p, Vector2i.ONE)
+	var origin := Vector2(rect.position * TILE)
+	var w := float(rect.size.x * TILE)
+	var h := float(rect.size.y * TILE)
 	var frame := Color(0.5, 0.37, 0.22)
-	draw_rect(Rect2(origin + Vector2(4, 10), Vector2(TILE - 8, TILE - 16)), frame, false, 2.0)
-	draw_line(origin + Vector2(6, 12), origin + Vector2(TILE - 6, TILE - 8), frame, 2.0)
-	draw_line(origin + Vector2(TILE - 6, 12), origin + Vector2(6, TILE - 8), frame, 2.0)
-	var pole := origin + Vector2(TILE / 2.0, 8)
+	draw_rect(Rect2(origin + Vector2(4, 9), Vector2(w - 8, h - 13)), frame, false, 2.0)
+	draw_line(origin + Vector2(7, 11), origin + Vector2(w - 7, h - 6), frame, 2.0)
+	draw_line(origin + Vector2(w - 7, 11), origin + Vector2(7, h - 6), frame, 2.0)
+	var pole := origin + Vector2(w / 2.0, 8)
 	draw_line(pole, pole + Vector2(0, -12), Color(0.25, 0.18, 0.12), 2.0)
 	var flag := PackedVector2Array([
 		pole + Vector2(0, -12), pole + Vector2(9, -9), pole + Vector2(0, -6),
@@ -591,6 +717,9 @@ func _draw_agents() -> void:
 					draw_circle(c + Vector2(5.0, -5.0), 2.5, GOLD)
 				for i in clampi(a.level, 0, 5):
 					draw_circle(c + Vector2(-6 + i * 4, -9), 1.5, GOLD)
+				for i in clampi(int(a.gear), 0, 4):
+					draw_circle(c + Vector2(-6 + i * 4, -13), 1.5,
+						Color(0.72, 0.8, 0.9))
 			_:
 				draw_circle(c, 4.0, Color(0.85, 0.72, 0.55))
 				if a.carrying > 0:

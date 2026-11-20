@@ -6,6 +6,8 @@ func _initialize() -> void:
 	var sim = load("res://scripts/kingdom.gd").new()
 	sim.wild_ecology = false # exact starting-state accounting; ecology tested separately
 	sim.attach_world(WorldC)
+	sim.building_padding = false
+	sim.building_footprints = false # existing fixtures stay 1x1; footprint checks live in sim_test
 	sim.set_fog_enabled(false) # exact starting-state accounting; fog tested separately
 	sim.raids_enabled = false # exact starting-state accounting; raids tested separately
 	sim.heroes_enabled = false
@@ -15,9 +17,9 @@ func _initialize() -> void:
 	if sim.gold != 50 or sim.pop != 5 or sim.pop_cap != 5:
 		failed = true
 		print("FAIL: bad starting state")
-	if sim.agents.size() != 5:
+	if sim.agents.size() != 4:
 		failed = true
-		print("FAIL: starting peasants not spawned: %d" % sim.agents.size())
+		print("FAIL: starting visible peasants not capped: %d" % sim.agents.size())
 	if not sim.buildings.has(sim.keep_pos) or sim.buildings[sim.keep_pos].kind != "castle":
 		failed = true
 		print("FAIL: keep not placed")
@@ -116,6 +118,121 @@ func _initialize() -> void:
 	elif not broke.build_at("farm", farm):
 		failed = true
 		print("FAIL: recovered realm could not build")
+
+	# Building footprints: halls span several tiles, and every structure keeps
+	# a full one-tile ring of open ground. Construction sites count immediately.
+	var expected_sizes := {
+		"castle": Vector2i(3, 3),
+		"tavern": Vector2i(2, 1),
+		"herbalist_grove": Vector2i(2, 2),
+		"wizard_tower": Vector2i(1, 2),
+		"market": Vector2i(2, 1),
+		"shrine": Vector2i(2, 1),
+		"blacksmith": Vector2i(2, 1),
+		"ranger_hut": Vector2i(2, 1),
+		"mead_hall": Vector2i(2, 1),
+		"guardhouse": Vector2i(2, 1),
+		"farm": Vector2i(1, 1),
+		"house": Vector2i(1, 1),
+	}
+	var KingdomC = load("res://scripts/kingdom.gd")
+	for kind in expected_sizes:
+		if KingdomC.BUILDING_SIZES.get(kind, Vector2i.ZERO) != expected_sizes[kind]:
+			failed = true
+			print("FAIL: wrong footprint for %s: %s" % [kind, KingdomC.BUILDING_SIZES.get(kind, Vector2i.ZERO)])
+
+	var w4 = load("res://scripts/world.gd").new()
+	w4.generate(42)
+	var pad = load("res://scripts/kingdom.gd").new()
+	pad.wild_ecology = false
+	pad.attach_world(w4)
+	pad.building_padding = true
+	pad.building_footprints = true
+	pad.set_fog_enabled(false)
+	pad.keep_trickle = 0
+	pad.raids_enabled = false
+	pad.heroes_enabled = false
+	pad.gold = 500
+	var castle: Rect2i = pad.building_rect(pad.keep_pos, "castle")
+	if castle.size != Vector2i(3, 3) or castle.position != pad.keep_pos - Vector2i.ONE:
+		failed = true
+		print("FAIL: keep footprint not centred 3x3: %s" % castle)
+	# The castle occupies its 3x3; its outer 5x5 ring is all padding.
+	for y in range(castle.position.y - 1, castle.position.y + castle.size.y + 1):
+		for x in range(castle.position.x - 1, castle.position.x + castle.size.x + 1):
+			var q := Vector2i(x, y)
+			if castle.has_point(q):
+				if pad.can_build_at(q):
+					failed = true
+					print("FAIL: built on the keep footprint at %s" % q)
+				elif pad.build_block_reason(q) != "Something already stands there":
+					failed = true
+					print("FAIL: wrong footprint reason: %s" % pad.build_block_reason(q))
+			else:
+				if pad.can_build_at(q):
+					failed = true
+					print("FAIL: built in the keep's padding ring at %s" % q)
+				elif pad.build_block_reason(q) != "Leave a one-tile gap between buildings":
+					failed = true
+					print("FAIL: wrong padding reason: %s" % pad.build_block_reason(q))
+
+	# The grove may root in forest or marsh; other halls require grass.
+	var w5 = load("res://scripts/world.gd").new()
+	w5.generate(42)
+	w5.tiles.fill(w5.GRASS) # deterministic empty canvas for footprint geometry
+	var layout = load("res://scripts/kingdom.gd").new()
+	layout.wild_ecology = false
+	layout.attach_world(w5)
+	layout.building_padding = true
+	layout.building_footprints = true
+	layout.set_fog_enabled(false)
+	layout.keep_trickle = 0
+	layout.raids_enabled = false
+	layout.heroes_enabled = false
+	layout.gold = 500
+	var grove := Vector2i(8, 8)
+	w5.set_terrain(grove, w5.FOREST)
+	w5.set_terrain(grove + Vector2i(1, 0), w5.SWAMP)
+	w5.set_terrain(grove + Vector2i(0, 1), w5.GRASS)
+	w5.set_terrain(grove + Vector2i(1, 1), w5.FOREST)
+	if layout.can_build_at(grove, "house"):
+		failed = true
+		print("FAIL: ordinary hall allowed on wild grove ground")
+	if not layout.can_build_at(grove, "herbalist_grove"):
+		failed = true
+		print("FAIL: grove refused on mixed forest/marsh")
+	elif not layout.build_at("herbalist_grove", grove):
+		failed = true
+		print("FAIL: grove build failed")
+	else:
+		for q in layout.building_tiles(grove, "herbalist_grove"):
+			if layout.building_origin_at(q) != grove:
+				failed = true
+				print("FAIL: grove footprint not occupied at %s" % q)
+		var beside_grove: Vector2i = grove + Vector2i(2, 0)
+		if layout.can_build_at(beside_grove, "tavern"):
+			failed = true
+			print("FAIL: built in the grove's padding")
+		elif layout.build_block_reason(beside_grove, "tavern") != "Leave a one-tile gap between buildings":
+			failed = true
+			print("FAIL: wrong grove padding reason: %s" % layout.build_block_reason(beside_grove, "tavern"))
+		var tavern: Vector2i = grove + Vector2i(5, 0)
+		if not layout.can_build_at(tavern, "tavern"):
+			failed = true
+			print("FAIL: valid 2x1 tavern refused")
+		elif not layout.build_at("tavern", tavern):
+			failed = true
+			print("FAIL: 2x1 tavern build failed")
+		else:
+			if layout.building_rect(tavern, "tavern").size != Vector2i(2, 1):
+				failed = true
+				print("FAIL: tavern footprint wrong")
+			if layout.building_origin_at(tavern + Vector2i(1, 0)) != tavern:
+				failed = true
+				print("FAIL: tavern's second tile not occupied")
+			if layout.can_build_at(tavern + Vector2i(0, 1), "house"):
+				failed = true
+				print("FAIL: built directly below the tavern footprint")
 
 	# Event log scrollback: every announcement is recorded with a monotonic
 	# id and timestamp, and the ring is capped.

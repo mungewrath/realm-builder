@@ -19,6 +19,9 @@ func _initialize() -> void:
 	_test_loot_pickup()
 	_test_leisure_goals()
 	_test_fast_first_arrival()
+	_test_hero_cap_scaling()
+	_test_over_cap_warnings_and_departure()
+	_test_dismiss_hero()
 	_test_long_run()
 	print("RESULT: %s" % ["PASS" if not failed else "FAIL"])
 	quit(1 if failed else 0)
@@ -33,6 +36,8 @@ func _make_sim(seed_value: int):
 	var sim = load("res://scripts/kingdom.gd").new()
 	sim.wild_ecology = false # hero accounting; ecology has its own suite
 	sim.attach_world(WorldC)
+	sim.building_padding = false
+	sim.building_footprints = false # existing fixtures stay 1x1; footprint checks live in sim_test
 	sim.set_fog_enabled(false) # hero accounting without fog gates
 	sim.keep_trickle = 0 # exact gold accounting; trickle has its own check
 	return sim
@@ -119,11 +124,17 @@ func _test_attraction_mix() -> void:
 		return
 	mix = sim._attraction_mix()
 	if int(mix.get("rogue", 0)) != 1 or int(mix.get("paladin", 0)) != 1 \
-			or int(mix.get("druid", 0)) != 1:
+			or mix.has("druid"):
 		_fail("tavern+shrine mix wrong: %s" % mix)
+	# M7.1: the druid follows the herbalist grove, not the shrine.
+	if not _build(sim, "herbalist_grove", sim.keep_pos + Vector2i(3, 2)):
+		return
+	mix = sim._attraction_mix()
+	if int(mix.get("druid", 0)) != 1:
+		_fail("herbalist grove did not draw a druid: %s" % mix)
 	# Incomplete buildings must not attract anyone yet.
 	sim.gold = 200
-	sim.build_at("market", sim.keep_pos + Vector2i(3, 3))
+	sim.build_at("market", sim.keep_pos + Vector2i(4, 3))
 	if sim._attraction_mix().has("warrior"):
 		_fail("unfinished building attracted a class")
 
@@ -633,6 +644,102 @@ func _test_fast_first_arrival() -> void:
 	if not arrived:
 		_fail("no hero within 12 ticks of the tavern's finish")
 
+func _test_hero_cap_scaling() -> void:
+	# One hero per five living peasants, never fewer than one.
+	var sim = _make_sim(277)
+	var cases := [[0, 1], [4, 1], [5, 1], [9, 1], [10, 2], [14, 2],
+		[15, 3], [24, 4], [25, 5]]
+	for row in cases:
+		sim.pop = int(row[0])
+		if sim.hero_cap() != int(row[1]):
+			_fail("pop %d gives hero cap %d, expected %d"
+				% [sim.pop, sim.hero_cap(), row[1]])
+
+func _test_over_cap_warnings_and_departure() -> void:
+	var sim = _make_sim(279)
+	sim.raids_enabled = false
+	sim.pop = 5 # cap 1
+	var h = _spawn_at(sim, "rogue", sim.keep_pos)
+	_spawn_at(sim, "warrior", sim.keep_pos)
+	if sim._count_kind("hero") != 2 or sim.hero_cap() != 1:
+		_fail("staging failed for over-cap test")
+		return
+	var warn_mark: int = sim.event_seq
+	sim._hero_cap_tick()
+	if sim._hero_over_cap_warnings_left != sim.hero_over_cap_warnings - 1:
+		_fail("first over-cap warning did not fire")
+	for i in 200:
+		sim._hero_cap_tick()
+	if sim._hero_over_cap_warnings_left != 0:
+		_fail("over-cap warnings never exhausted")
+	var warns := 0
+	for e in sim.event_log:
+		if int(e.id) > warn_mark and (String(e.text).contains("peasants can support")
+				or String(e.text).contains("Heroes grow restless")):
+			warns += 1
+	if warns != 2:
+		_fail("expected exactly 2 over-cap warnings, saw %d" % warns)
+	var seq_after: int = sim.event_seq
+	for i in 50:
+		sim._hero_cap_tick()
+	if sim.event_seq != seq_after:
+		_fail("over-cap warnings kept repeating after the second")
+	# Leaving is now on the hero's action table.
+	var exit: Vector2i = sim._leave_target(h.tile())
+	if exit.x < 0:
+		_fail("no reachable map edge for a departing hero")
+		return
+	var scores: Dictionary = sim.hero_goal_scores(h)
+	if not scores.has("leave"):
+		_fail("over-cap hero has no leave option: %s" % scores)
+		return
+	var AgentC = load("res://scripts/agents.gd")
+	h.state = "idle"
+	h.purpose = ""
+	h.path = []
+	h.decision_left = 0
+	var chose := false
+	for i in 300:
+		sim._hero_decide(h)
+		if h.purpose == AgentC.LEAVE:
+			chose = true
+			break
+	if not chose:
+		_fail("over-cap hero never chose to leave")
+		return
+	# Let the departing hero walk off the map; the realm drops the agent.
+	sim.heroes_enabled = false
+	for i in 500:
+		sim.update()
+		if sim.heroes_departed > 0:
+			break
+	if sim.heroes_departed != 1:
+		_fail("departing hero was not counted (departed %d)" % sim.heroes_departed)
+	if sim._count_kind("hero") != 1 or sim.agents.has(h):
+		_fail("departing hero never left the map")
+
+func _test_dismiss_hero() -> void:
+	var sim = _make_sim(281)
+	var h = _spawn_at(sim, "rogue", sim.keep_pos)
+	if h == null:
+		return
+	if sim.hero_count() != 1 or sim.hero_roster().size() != 1:
+		_fail("hero count/roster missed the spawned hero")
+	if not sim.dismiss_hero(h):
+		_fail("selected hero refused dismissal")
+		return
+	if h.purpose != "leave" or h.goal != "leave":
+		_fail("dismissed hero is not leaving: %s/%s" % [h.purpose, h.goal])
+	sim.heroes_enabled = false # let the exit walk finish without new plans
+	for i in 500:
+		sim.update()
+		if sim.heroes_departed > 0:
+			break
+	if sim.heroes_departed != 1 or sim.agents.has(h):
+		_fail("dismissed hero never left the realm")
+	if sim.hero_count() != 0:
+		_fail("hero count did not drop after departure")
+
 func _test_long_run() -> void:
 	# ~10 game years with everything on: raids, heroes, bounties posted by
 	# the sim itself once gold allows. Nothing may wedge.
@@ -660,9 +767,11 @@ func _test_long_run() -> void:
 		_fail("negative gold in long run")
 	if sim.heroes_spawned < 1:
 		_fail("no hero ever arrived in 10 years of taverns and shrines")
-	if sim.heroes_spawned != sim.heroes_fallen + _count(sim, "hero"):
-		_fail("hero accounting off: spawned %d fallen %d alive %d"
-			% [sim.heroes_spawned, sim.heroes_fallen, _count(sim, "hero")])
+	if sim.heroes_spawned != sim.heroes_fallen + sim.heroes_departed \
+			+ _count(sim, "hero"):
+		_fail("hero accounting off: spawned %d fallen %d departed %d alive %d"
+			% [sim.heroes_spawned, sim.heroes_fallen, sim.heroes_departed,
+				_count(sim, "hero")])
 	for h in _heroes(sim):
 		if h.level < 1 or h.max_hp <= 0:
 			_fail("hero in bad shape: level %d hp %d/%d" % [h.level, h.hp, h.max_hp])

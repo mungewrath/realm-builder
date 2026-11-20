@@ -33,6 +33,12 @@ const ASSIST := "assist"
 const PRAY := "pray"
 const CAROUSE := "carouse"
 
+# M7.2: buy forged gear from the blacksmith's stock.
+const GEAR := "gear"
+
+# Over the realm's hero cap, a restless hero may simply walk out.
+const LEAVE := "leave"
+
 # Goblin behavior states (personal, weighted-random; the den overlays its
 # own mood on the idle warband). LURK is never a movement purpose.
 const LURK := "lurk"
@@ -85,6 +91,8 @@ var level := 1
 var xp := 0
 var fatigue := 0
 var decision_left := 0
+# M7.2: forged gear points bought at the blacksmith; each adds to melee.
+var gear := 0
 # M5 fog bookkeeping: last tile this agent already revealed from.
 var fog_tile := Vector2i(-1, -1)
 # M6.1 wild ecology: species row id for creature agents.
@@ -235,12 +243,21 @@ func _arrived() -> void:
 				FORAGE:
 					state = ACTING
 					work_left = kingdom.GATHER_TICKS
-				RECRUIT, WANDER, PROWL, EXPLORE:
+				RECRUIT, WANDER, PROWL:
 					# Settle in / loiter where the behavior put us until it
 					# expires.
 					state = IDLE
 					purpose = ""
-				SHOP, TREASURE, ASSIST:
+				EXPLORE:
+					# A new horizon is a lesson in itself.
+					kingdom.hero_explore(self)
+					state = IDLE
+					purpose = ""
+				LEAVE:
+					kingdom.hero_leave(self)
+					state = IDLE
+					purpose = ""
+				SHOP, GEAR, TREASURE, ASSIST:
 					state = ACTING
 					work_left = 1
 				PRAY:
@@ -351,6 +368,10 @@ func _finish_work() -> void:
 			kingdom.bandit_mug(self)
 		SHOP:
 			kingdom.hero_shop(self)
+			state = IDLE
+			purpose = ""
+		GEAR:
+			kingdom.hero_buy_gear(self)
 			state = IDLE
 			purpose = ""
 		REST:
