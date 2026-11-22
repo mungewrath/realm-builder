@@ -16,6 +16,8 @@ const BUILDING_TITLES := {
 	"ranger_hut": "Ranger Hut",
 	"mead_hall": "Mead Hall",
 	"herbalist_grove": "Herbalist Grove",
+	"graveyard": "Graveyard",
+	"sewers": "Sewers",
 }
 
 const BUILDING_BLURBS := {
@@ -31,10 +33,15 @@ const BUILDING_BLURBS := {
 	"ranger_hut": "A low cabin at the treeline. Rangers range out from it, charting the wilds and keeping hungry beasts away from the settled fields.",
 	"mead_hall": "A longhouse thick with the smell of ale and roasted meat. Barbarians gather here, and strong drink makes bold hands reach for bounty flags.",
 	"herbalist_grove": "Neat rows of herbs and a quiet green hut. Druids and healers tend the grove; its herbs ease wounds and can lift a hag's curse.",
+	"graveyard": "Crooked stones under a cold sky. The dead are laid here — and a necromancer is drawn to the stored corpses. The burial ground eases plague pressure; a shrine's ward keeps the unquiet down.",
+	"sewers": "A grated stone mouth breathing damp air. The drains keep fever out of the crowded houses, but rats follow the filth up into the larder. Rogues find the tunnels a convenient den.",
 }
 
 const LOOT_TITLE := "Dropped Loot"
 const LOOT_BLURB := "A purse left where someone fell. Quick hands and greedy hearts both know what to do with it."
+
+const EXPLORE_BOUNTY_TITLE := "Uncharted Ground"
+const EXPLORE_BOUNTY_BLURB := "Blank country beyond the realm's maps. A posted bounty turns a patch of that darkness into a destination for a bold hero."
 
 # M6.1: dens are content rows now — one title/blurb per kind. Goblin dens
 # stay the realm's enemy; wild lairs are the land's own folk.
@@ -107,6 +114,7 @@ const HERO_TITLES := {
 	"wizard": "Wizard",
 	"ranger": "Ranger",
 	"barbarian": "Barbarian",
+	"necromancer": "Necromancer",
 }
 
 const HERO_BLURBS := {
@@ -118,6 +126,7 @@ const HERO_BLURBS := {
 	"wizard": "A scholar of fire and sigils. The tower's mana draws them, and they smite evil in ways that leave the grass smoking.",
 	"ranger": "A silent woodsman. Charts the wilds for the realm, hunts game, and keeps the beasts from the farms.",
 	"barbarian": "A roaring fighter from the far hills. Mead and a posted bounty are all the orders a barbarian needs.",
+	"necromancer": "A grave-robed scholar of the boundary between life and death. The graveyard draws them, and stored corpses rise as temporary servants whose loyalty slowly rots away.",
 }
 
 const UNIT_ROLES := {
@@ -131,6 +140,10 @@ const UNIT_ROLES := {
 	"bandit": "Bandit",
 	"frog": "Giant Frog",
 	"owlbear": "Owlbear",
+	"rat": "Giant Rat",
+	"undead": "Restless Dead",
+	"skeleton": "Skeleton",
+	"ghoul": "Ghoul",
 }
 
 static func building_title(kind: String) -> String:
@@ -175,6 +188,21 @@ static func loot_blurb() -> String:
 static func loot_status(gold: int) -> String:
 	return "%d gold lie in the dirt, waiting for quick hands." % gold
 
+static func explore_bounty_title() -> String:
+	return EXPLORE_BOUNTY_TITLE
+
+static func explore_bounty_blurb() -> String:
+	return EXPLORE_BOUNTY_BLURB
+
+static func explore_bounty_status(reward: int, sim) -> String:
+	if reward > 0:
+		return "%d gold waits for the hero who reaches this spot and charts it." \
+			% reward
+	if sim == null:
+		return "Post a bounty to call a hero here."
+	return "No one has charted this ground. Post a bounty (%dg) to send a hero into it." \
+		% sim.BOUNTY_FEE
+
 static func hero_title(a) -> String:
 	var s := "%s · level %d" % [HERO_TITLES.get(a.hero_class, "Adventurer"), a.level]
 	if int(a.gear) > 0:
@@ -187,8 +215,9 @@ static func hero_blurb(a) -> String:
 static func unit_title(a) -> String:
 	if a.kind == "hero":
 		return hero_title(a)
-	# Wild creatures are named by species, not by their agent kind.
-	var role: String = a.species if a.kind == "creature" else a.kind
+	# Wild creatures and raised dead are named by species when set.
+	var role: String = a.species if (a.kind == "creature" or a.kind == "undead") \
+		else a.kind
 	return UNIT_ROLES.get(role, "Stranger")
 
 static func den_status(den: Dictionary, p: Vector2i = Vector2i(-1, -1), sim = null) -> String:
@@ -204,14 +233,19 @@ static func den_status(den: Dictionary, p: Vector2i = Vector2i(-1, -1), sim = nu
 			"gnome_enclave":
 				var s := "Little workshops steam and clank; tinker goods wait on the trade."
 				if sim != null:
-					if sim.tension_between("gnomes", "kobolds") <= -2:
+					if sim.tribute_active(p):
+						s += " The tribute has bought a truce with the kobolds."
+					elif sim.tension_between("gnomes", "kobolds") <= -2:
 						s = "The gates are barred: the kobold feud has choked off trade."
 					elif int(den.get("gold", 0)) > 0:
 						s += " Their coffers hold %d gold." % int(den.get("gold", 0))
 				return s
 			"bandit_camp":
-				return "Cookfires and dice. %d gold sits in the strongbox, not all of it honestly come by." \
+				var s := "Cookfires and dice. %d gold sits in the strongbox, not all of it honestly come by." \
 					% int(den.get("gold", 0))
+				if sim != null and sim.tribute_active(p):
+					s += " Tribute has bought their silence for now."
+				return s
 			"hag_coven":
 				return "Bones and drying herbs. The hags mutter over their curses and pay no heed to soldiers."
 			"frog_den":
@@ -309,6 +343,32 @@ static func building_status(kind: String, p: Vector2i, b: Dictionary, sim) -> St
 			if herbs <= 0:
 				return "Green shoots rise in the herb beds, not yet ready for the harvest."
 			return "Bundles of healing herbs hang drying beneath the eaves."
+		"graveyard":
+			var stored := int(b.get("corpses", 0))
+			var s := ""
+			if sim != null:
+				s = "Burial relief: +%d safe population. " \
+					% int(sim.plague_graveyard_capacity)
+			if stored <= 0:
+				s += "The graves are quiet, for now."
+			else:
+				s += "Stored corpses: %d. " % stored
+				if sim != null and sim._shrine_ward_at(p):
+					s += "A shrine's ward keeps the unquiet in their graves."
+				elif sim != null and sim._has_necromancer():
+					s += "A necromancer stalks the rows, waking servants from the dead."
+				else:
+					s += "No one is watching the graves, and the unquiet are stirring."
+			return s
+		"sewers":
+			var s := "The drains carry the filth away; crowded houses breathe easier for it."
+			if sim != null:
+				var rats: int = int(sim._count_agents_home(p, "rat"))
+				if rats > 0:
+					s += " Rats have found their way up from below."
+				if int(b.get("rat_left", 0)) <= sim.sewer_rat_ticks / 3:
+					s += " Something is moving in the dark."
+			return s
 		"castle":
 			return "The realm numbers %d souls, and the ledger grows with every collector's round." % sim.pop
 	return ""
@@ -449,6 +509,10 @@ static func _hero_home_name(a) -> String:
 			return "mead hall"
 		"herbalist_grove":
 			return "herbalist grove"
+		"graveyard":
+			return "graveyard"
+		"sewers":
+			return "sewers"
 		_:
 			return "keep"
 
@@ -598,6 +662,48 @@ static func agent_activity(a) -> String:
 					return "putting a building to the torch"
 				"returning":
 					return "slinking home to the den"
+		"undead":
+			if a.fighting:
+				return "fighting with the living!"
+			if a.undead_side == "ally":
+				match a.state:
+					"idle":
+						return "waiting for its master's will"
+					"to_target":
+						if a.purpose == "assault":
+							return "marching on the %s" % _den_label(a)
+						return "stalking the realm's enemies"
+					"acting":
+						if a.purpose == "assault":
+							return "hammering at the %s's door" % _den_label(a)
+						return "clawing at the living"
+					"returning":
+						return "drifting back to its grave"
+				return "serving its master"
+			match a.state:
+				"idle":
+					return "stirring in the grave dirt"
+				"to_target":
+					return "drawn toward the living"
+				"acting":
+					if a.purpose == "raid":
+						return "clawing at the settlement"
+					return "reaching for the living"
+				"returning":
+					return "sinking back toward the graves"
+			return "restless and hungry"
+		"rat":
+			if a.fighting:
+				return "squealing and biting!"
+			match a.state:
+				"idle":
+					return "scurrying through the drains"
+				"to_target":
+					return "slipping toward the larder"
+				"acting":
+					return "gnawing at the stores"
+				"returning":
+					return "darting back into the sewers"
 		"bandit":
 			if a.fighting:
 				return "brawling with the watch!"

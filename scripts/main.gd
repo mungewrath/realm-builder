@@ -2,6 +2,8 @@ extends Node2D
 
 const Descriptions = preload("res://scripts/descriptions.gd")
 const MinimapC = preload("res://scripts/minimap.gd")
+const ManualC = preload("res://scripts/manual.gd")
+const ManualButtonC = preload("res://scripts/manual_button.gd")
 
 const SIDE_PANEL_MIN_WIDTH := 900.0
 
@@ -19,6 +21,7 @@ var inspect_blurb: Label
 var inspect_status: Label
 var inspect_units: Label
 var inspect_action: Button
+var inspect_action2: Button
 
 # Hero roster card: a full list of the realm's heroes and what they are doing.
 var hero_roster_panel: PanelContainer
@@ -41,6 +44,12 @@ var log_panel: PanelContainer
 var log_text: RichTextLabel
 var log_last_id := 0
 
+# Player manual card: the book button sits beside the minimap and opens a
+# scrollable, searchable reference built from MANUAL.md.
+var manual_button: Button
+var manual_panel: PanelContainer
+var manual_text: RichTextLabel
+
 @onready var map_view := %MapView
 @onready var res_label: Label = %ResLabel
 @onready var pop_label: Label = %PopLabel
@@ -58,6 +67,8 @@ var log_last_id := 0
 @onready var ranger_button: Button = %RangerButton
 @onready var mead_button: Button = %MeadButton
 @onready var herbalist_button: Button = %HerbalistButton
+@onready var graveyard_button: Button = %GraveyardButton
+@onready var sewers_button: Button = %SewersButton
 @onready var dev_button: Button = %DevButton
 
 func _ready() -> void:
@@ -77,16 +88,20 @@ func _ready() -> void:
 	ranger_button.pressed.connect(_on_ranger_pressed)
 	mead_button.pressed.connect(_on_mead_pressed)
 	herbalist_button.pressed.connect(_on_herbalist_pressed)
+	graveyard_button.pressed.connect(_on_graveyard_pressed)
+	sewers_button.pressed.connect(_on_sewers_pressed)
 	_build_minimap()
 	_build_inspect_panel()
 	_build_event_log()
 	_build_hero_roster()
+	_build_manual()
 	_build_placement_panel()
 	_build_speed_panel()
 	hero_roster_button.pressed.connect(_toggle_hero_roster)
 	get_viewport().size_changed.connect(_layout_inspect_panel)
 	get_viewport().size_changed.connect(_layout_event_log)
 	get_viewport().size_changed.connect(_layout_hero_roster)
+	get_viewport().size_changed.connect(_layout_manual_panel)
 	get_viewport().size_changed.connect(_layout_placement_panel)
 	tick_timer = Timer.new()
 	tick_timer.wait_time = 1.0 / sim_speed
@@ -128,9 +143,16 @@ func _on_mead_pressed() -> void:
 func _on_herbalist_pressed() -> void:
 	_toggle_build("herbalist_grove")
 
+func _on_graveyard_pressed() -> void:
+	_toggle_build("graveyard")
+
+func _on_sewers_pressed() -> void:
+	_toggle_build("sewers")
+
 func _toggle_build(kind: String) -> void:
 	build_mode = "" if build_mode == kind else kind
 	_clear_placement()
+	_close_manual()
 	if build_mode != "":
 		_close_inspect()
 		_close_event_log()
@@ -139,6 +161,7 @@ func _toggle_build(kind: String) -> void:
 
 func _on_tile_clicked(p: Vector2i) -> void:
 	_close_hero_roster()
+	_close_manual()
 	if build_mode != "":
 		# First tap only stages the building. The check button commits, so a
 		# mis-tap (or an invalid red preview) never spends gold.
@@ -218,11 +241,14 @@ func _refresh() -> void:
 	ranger_button.set_pressed_no_signal(build_mode == "ranger_hut")
 	mead_button.set_pressed_no_signal(build_mode == "mead_hall")
 	herbalist_button.set_pressed_no_signal(build_mode == "herbalist_grove")
+	graveyard_button.set_pressed_no_signal(build_mode == "graveyard")
+	sewers_button.set_pressed_no_signal(build_mode == "sewers")
 	var kinds := {"farm": farm_button, "house": house_button, "guardhouse": guard_button,
 		"tavern": tavern_button, "market": market_button, "shrine": shrine_button,
 		"blacksmith": blacksmith_button, "wizard_tower": wizard_button,
 		"ranger_hut": ranger_button, "mead_hall": mead_button,
-		"herbalist_grove": herbalist_button}
+		"herbalist_grove": herbalist_button, "graveyard": graveyard_button,
+		"sewers": sewers_button}
 	for kind in kinds:
 		var btn: Button = kinds[kind]
 		btn.disabled = sim.gold < sim.BUILD_COSTS[kind]
@@ -254,10 +280,15 @@ func _build_inspect_panel() -> void:
 	inspect_action.add_theme_font_size_override("font_size", 20)
 	inspect_action.visible = false
 	inspect_action.pressed.connect(_on_inspect_action)
+	inspect_action2 = Button.new()
+	inspect_action2.add_theme_font_size_override("font_size", 20)
+	inspect_action2.visible = false
+	inspect_action2.pressed.connect(_on_inspect_action2)
 	vb.add_child(top)
 	vb.add_child(inspect_blurb)
 	vb.add_child(inspect_status)
 	vb.add_child(inspect_action)
+	vb.add_child(inspect_action2)
 	vb.add_child(inspect_units)
 	inspect_panel.add_child(vb)
 	get_node("UI/Root").add_child(inspect_panel)
@@ -300,7 +331,8 @@ func _agents_here(p: Vector2i) -> Array:
 	for a in sim.agents:
 		if a.tile() != p:
 			continue
-		if (a.kind == "goblin" or a.kind == "creature") \
+		if (a.kind == "goblin" or a.kind == "creature" or a.kind == "rat" \
+				or (a.kind == "undead" and a.undead_side == "hostile")) \
 				and not sim.explored_at(p):
 			continue
 		here.append(a)
@@ -318,8 +350,10 @@ func _inspect(p: Vector2i) -> void:
 	var here := _agents_here(p)
 	var workable: bool = sim.can_drain_swamp(p) or sim.can_clear_forest(p) \
 		or sim.terrain_works.has(p)
+	var explore_here: bool = sim.explore_bounties.has(p) \
+		or sim.can_post_explore_bounty(p)
 	if b == null and den == null and pile_gold <= 0 and here.is_empty() \
-			and not workable:
+			and not workable and not explore_here:
 		_close_inspect()
 		return
 	# A click on a building, den, or loot pile pins the tile; a unit standing
@@ -350,6 +384,13 @@ func _fill_tile_inspect(b, den, pile_gold: int) -> void:
 		inspect_title.text = Descriptions.loot_title()
 		inspect_blurb.text = Descriptions.loot_blurb()
 		inspect_status.text = Descriptions.loot_status(pile_gold)
+	elif sim.explore_bounties.has(selected_tile) \
+			or not sim.explored_at(selected_tile):
+		var reward: int = int(sim.explore_bounties.get(
+			selected_tile, {}).get("reward", 0))
+		inspect_title.text = Descriptions.explore_bounty_title()
+		inspect_blurb.text = Descriptions.explore_bounty_blurb()
+		inspect_status.text = Descriptions.explore_bounty_status(reward, sim)
 	else:
 		var t: int = sim.world.get_terrain(selected_tile)
 		inspect_title.text = Descriptions.terrain_title(t)
@@ -359,6 +400,8 @@ func _fill_tile_inspect(b, den, pile_gold: int) -> void:
 func _refresh_action(p: Vector2i, den) -> void:
 	# One-tap actions live on the inspector card: demolition for friendly
 	# buildings (except the Palace), bounty flags on lairs, and terrain work.
+	if inspect_action2 != null:
+		inspect_action2.visible = false
 	var b: Dictionary = sim.buildings.get(p, {})
 	if not b.is_empty():
 		if b.kind == "castle":
@@ -376,6 +419,18 @@ func _refresh_action(p: Vector2i, den) -> void:
 			inspect_action.text = "Add to bounty (+%dg)" % (sim.BOUNTY_FEE - sim.BOUNTY_OVERHEAD)
 		else:
 			inspect_action.text = "Post bounty (%dg)" % sim.BOUNTY_FEE
+		inspect_action.visible = true
+		inspect_action.disabled = sim.gold < sim.BOUNTY_FEE
+		_refresh_tribute_action(p, den)
+		return
+	if sim.explore_bounties.has(p):
+		inspect_action.text = "Add to explore bounty (+%dg)" \
+			% (sim.BOUNTY_FEE - sim.BOUNTY_OVERHEAD)
+		inspect_action.visible = true
+		inspect_action.disabled = sim.gold < sim.BOUNTY_FEE
+		return
+	if not sim.explored_at(p) and sim.can_post_explore_bounty(p):
+		inspect_action.text = "Post explore bounty (%dg)" % sim.BOUNTY_FEE
 		inspect_action.visible = true
 		inspect_action.disabled = sim.gold < sim.BOUNTY_FEE
 		return
@@ -398,6 +453,23 @@ func _refresh_action(p: Vector2i, den) -> void:
 	else:
 		inspect_action.visible = false
 
+func _refresh_tribute_action(p: Vector2i, den) -> void:
+	# Tribute is a second, diplomatic lever on the two camps that can be
+	# bought off: bandits who rob the roads and gnomes caught in the feud.
+	var kind_key: String = den.get("kind", "")
+	if kind_key != "bandit_camp" and kind_key != "gnome_enclave":
+		return
+	if not dens_reachable(p):
+		return
+	inspect_action2.visible = true
+	if sim.tribute_active(p):
+		var left: int = maxi(0, int(den.get("tribute_until", 0)) - sim.tick)
+		inspect_action2.text = "Tribute holds (%d ticks)" % left
+		inspect_action2.disabled = true
+	else:
+		inspect_action2.text = "Pay tribute (%dg)" % sim.tribute_cost
+		inspect_action2.disabled = sim.gold < sim.tribute_cost
+
 func dens_reachable(p: Vector2i) -> bool:
 	# Only dens the realm can actually reach are bounty-able.
 	return sim.find_path(sim.den_doorstep(p, sim.keep_pos), sim.keep_pos).size() > 0
@@ -414,10 +486,19 @@ func _on_inspect_action() -> void:
 		sim.demolish_building(selected_tile)
 	elif sim.dens.has(selected_tile):
 		sim.post_bounty(selected_tile)
+	elif sim.explore_bounties.has(selected_tile) \
+			or not sim.explored_at(selected_tile):
+		sim.post_explore_bounty(selected_tile)
 	elif sim.world.get_terrain(selected_tile) == sim.world.SWAMP:
 		sim.drain_swamp(selected_tile)
 	elif sim.world.get_terrain(selected_tile) == sim.world.FOREST:
 		sim.clear_forest(selected_tile)
+	_refresh_world_views()
+
+func _on_inspect_action2() -> void:
+	if selected_tile.x < 0 or not sim.dens.has(selected_tile):
+		return
+	sim.pay_tribute(selected_tile)
 	_refresh_world_views()
 
 func _refresh_world_views() -> void:
@@ -428,11 +509,16 @@ func _refresh_world_views() -> void:
 
 func _inspect_agent(a) -> void:
 	# Follow mode: the panel tracks the unit wherever it walks.
+	if inspect_action2 != null:
+		inspect_action2.visible = false
 	selected_tile = a.tile()
 	map_view.selected = selected_tile
 	inspect_title.text = Descriptions.unit_title(a)
 	inspect_blurb.text = Descriptions.hero_blurb(a) if a.kind == "hero" else ""
 	inspect_status.text = Descriptions.agent_activity(a)
+	if a.kind == "hero":
+		inspect_status.text += "\nAccuracy %d%% · melee %d" % [
+			roundi(sim.hero_accuracy(a) * 100.0), sim.hero_melee_damage(a)]
 	var here := _agents_here(selected_tile)
 	here.erase(a)
 	_show_units(here, false)
@@ -444,6 +530,8 @@ func _inspect_agent(a) -> void:
 		inspect_action.disabled = leaving
 	else:
 		inspect_action.visible = false
+		if inspect_action2 != null:
+			inspect_action2.visible = false
 
 func _show_units(here: Array, include_first: bool) -> void:
 	var lines := []
@@ -478,7 +566,10 @@ func _inspect_tile(p: Vector2i) -> void:
 	var here := _agents_here(p)
 	var workable: bool = sim.can_drain_swamp(p) or sim.can_clear_forest(p) \
 		or sim.terrain_works.has(p)
-	if b == null and den == null and pile_gold <= 0 and not workable:
+	var explore_here: bool = sim.explore_bounties.has(p) \
+		or sim.can_post_explore_bounty(p)
+	if b == null and den == null and pile_gold <= 0 and not workable \
+			and not explore_here:
 		# A razed, claimed, or vanished pin: close rather than stale text.
 		_close_inspect()
 		return
@@ -492,6 +583,8 @@ func _close_inspect() -> void:
 	selected_unit = null
 	map_view.selected = Vector2i(-1, -1)
 	inspect_action.visible = false
+	if inspect_action2 != null:
+		inspect_action2.visible = false
 	map_view.queue_redraw()
 
 # --- Two-tap placement (mobile-friendly) ---------------------------------
@@ -569,7 +662,7 @@ func _build_event_log() -> void:
 	top.add_theme_constant_override("separation", 12)
 	var title := Label.new()
 	title.text = "Event Log"
-	title.add_theme_font_size_override("font_size", 26)
+	title.add_theme_font_size_override("font_size", 30)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var close := Button.new()
@@ -611,6 +704,7 @@ func _toggle_event_log() -> void:
 	if log_panel.visible:
 		_close_event_log()
 		return
+	_close_manual()
 	_close_hero_roster()
 	log_panel.visible = true
 	log_button.set_pressed_no_signal(true)
@@ -698,6 +792,7 @@ func _toggle_hero_roster() -> void:
 	if hero_roster_panel.visible:
 		_close_hero_roster()
 		return
+	_close_manual()
 	_close_inspect()
 	_close_event_log()
 	hero_roster_panel.visible = true
@@ -757,6 +852,90 @@ func _on_roster_hero_pressed(a) -> void:
 	_inspect_agent(a)
 	map_view.queue_redraw()
 
+# --- Player manual (bottom-right book) ------------------------------------
+
+func _build_manual() -> void:
+	manual_button = ManualButtonC.new()
+	manual_button.name = "ManualButton"
+	manual_button.pressed.connect(_toggle_manual)
+	get_node("UI/Root").add_child(manual_button)
+	manual_button.anchor_left = 1.0
+	manual_button.anchor_right = 1.0
+	manual_button.anchor_top = 1.0
+	manual_button.anchor_bottom = 1.0
+	manual_button.offset_left = -72.0
+	manual_button.offset_right = -12.0
+	manual_button.offset_top = -68.0
+	manual_button.offset_bottom = -12.0
+
+	manual_panel = PanelContainer.new()
+	manual_panel.name = "ManualPanel"
+	manual_panel.visible = false
+	manual_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 6)
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 12)
+	var title := Label.new()
+	title.text = "Player Manual"
+	title.add_theme_font_size_override("font_size", 26)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var close := Button.new()
+	close.text = "X"
+	close.add_theme_font_size_override("font_size", 22)
+	close.pressed.connect(_close_manual)
+	top.add_child(title)
+	top.add_child(close)
+	manual_text = RichTextLabel.new()
+	manual_text.bbcode_enabled = true
+	manual_text.scroll_active = true
+	manual_text.scroll_following = false
+	manual_text.selection_enabled = true
+	manual_text.add_theme_font_size_override("normal_font_size", 24)
+	manual_text.add_theme_font_size_override("bold_font_size", 24)
+	manual_text.add_theme_font_size_override("italics_font_size", 24)
+	manual_text.add_theme_font_size_override("bold_italics_font_size", 24)
+	manual_text.add_theme_constant_override("line_separation", 5)
+	manual_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	manual_text.text = ManualC.to_bbcode(ManualC.load_markdown())
+	vb.add_child(top)
+	vb.add_child(manual_text)
+	manual_panel.add_child(vb)
+	get_node("UI/Root").add_child(manual_panel)
+	_layout_manual_panel()
+
+func _layout_manual_panel() -> void:
+	if manual_panel == null:
+		return
+	var vp := get_viewport_rect().size
+	var w := maxf(240.0, minf(1400.0, vp.x * 0.90))
+	var h := maxf(220.0, minf(1000.0, vp.y * 0.90))
+	manual_panel.anchor_left = 0.5
+	manual_panel.anchor_right = 0.5
+	manual_panel.anchor_top = 0.5
+	manual_panel.anchor_bottom = 0.5
+	manual_panel.offset_left = -w / 2.0
+	manual_panel.offset_right = w / 2.0
+	manual_panel.offset_top = -h / 2.0
+	manual_panel.offset_bottom = h / 2.0
+
+func _toggle_manual() -> void:
+	if manual_panel.visible:
+		_close_manual()
+		return
+	_close_event_log()
+	_close_hero_roster()
+	manual_panel.visible = true
+	manual_button.set_pressed_no_signal(true)
+	manual_text.scroll_to_line(0)
+
+func _close_manual() -> void:
+	if manual_panel == null:
+		return
+	manual_panel.visible = false
+	manual_button.set_pressed_no_signal(false)
+
 # --- Dev tools: sim speed (1-3x), fog of war toggle --------------------------
 
 func _build_minimap() -> void:
@@ -768,15 +947,14 @@ func _build_minimap() -> void:
 	_layout_minimap()
 
 func _layout_minimap() -> void:
-	# Bottom-right corner, above the build bar; the inspector card overlaps
-	# it while open, which is fine — dismiss to see the map.
+	# Bottom-right, with the manual book tucked into the corner beside it.
 	var h: float = minimap.custom_minimum_size.y
 	minimap.anchor_left = 1.0
 	minimap.anchor_right = 1.0
 	minimap.anchor_top = 1.0
 	minimap.anchor_bottom = 1.0
-	minimap.offset_left = -minimap.custom_minimum_size.x - 12.0
-	minimap.offset_right = -12.0
+	minimap.offset_left = -minimap.custom_minimum_size.x - 84.0
+	minimap.offset_right = -84.0
 	minimap.offset_top = -h - 12.0
 	minimap.offset_bottom = -12.0
 

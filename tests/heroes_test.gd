@@ -15,6 +15,7 @@ func _initialize() -> void:
 	_test_hero_combat_and_levels()
 	_test_hero_aggro()
 	_test_bounty_flow()
+	_test_explore_bounty_flow()
 	_test_death_drops_loot()
 	_test_loot_pickup()
 	_test_leisure_goals()
@@ -267,6 +268,8 @@ func _test_hero_combat_and_levels() -> void:
 	g.home = den
 	g.pos = Vector2(door) + Vector2(0.5, 0.5)
 	g.path = []
+	g.hp = 8
+	g.max_hp = 8
 	sim.agents.append(g)
 	var gobs := 0
 	for i in 300:
@@ -443,6 +446,57 @@ func _test_bounty_flow() -> void:
 	claimed = true
 	if not claimed:
 		_fail("unreachable")
+
+func _test_explore_bounty_flow() -> void:
+	var sim = _make_sim(241)
+	sim.set_fog_enabled(true)
+	sim.heroes_enabled = false
+	sim.raids_enabled = false
+	sim.dens.clear()
+	sim.gold = 100
+	var target: Vector2i = sim._explore_target(sim.keep_pos)
+	if target.x < 0:
+		_fail("no uncharted target to flag")
+		return
+	if not sim.can_post_explore_bounty(target):
+		_fail("reachable uncharted ground refused an explore bounty")
+		return
+	if not sim.post_explore_bounty(target):
+		_fail("explore bounty post failed")
+		return
+	var net: int = sim.BOUNTY_FEE - sim.BOUNTY_OVERHEAD
+	if sim.gold != 100 - sim.BOUNTY_FEE \
+			or int(sim.explore_bounties[target].reward) != net:
+		_fail("explore bounty fee/reward wrong: gold %d reward %s" \
+			% [sim.gold, sim.explore_bounties[target]])
+	if sim.post_explore_bounty(sim.keep_pos):
+		_fail("explore bounty posted on charted ground")
+	if not sim.post_explore_bounty(target):
+		_fail("explore bounty could not be topped up")
+	if int(sim.explore_bounties[target].reward) != net * 2:
+		_fail("explore bounty did not stack: %s" % sim.explore_bounties[target])
+	var h = _spawn_at(sim, "wizard", sim.keep_pos)
+	if h == null:
+		return
+	if not sim.hero_goal_scores(h).has("explore"):
+		_fail("explore bounty did not enter the hero's goal table")
+	if sim._explore_target(h.tile()) != target:
+		_fail("hero did not prefer the explore bounty target")
+	h.assign(target, "explore")
+	for i in 2000:
+		sim.update()
+		if not sim.explore_bounties.has(target):
+			break
+	if sim.explore_bounties.has(target):
+		_fail("hero never reached the explore bounty")
+		return
+	if h.pouch != net * 2 or sim.explore_bounties_paid != net * 2:
+		_fail("explore bounty payout wrong: purse %d paid %d" \
+			% [h.pouch, sim.explore_bounties_paid])
+	if not sim.explored_at(target):
+		_fail("explore bounty target was not charted")
+	if sim.can_post_explore_bounty(target):
+		_fail("charted ground still accepted an explore bounty")
 
 func _test_death_drops_loot() -> void:
 	var sim = _make_sim(241)

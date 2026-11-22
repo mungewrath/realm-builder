@@ -479,7 +479,7 @@ the gear economy, then the double-edged diplomacy/necromancy pass.
   remain unchanged.
 - **Blacksmith gear is real.** Heroes with at least 8g walk to a forge that
   has stock and buy one gear point (max 4), turning purse coin back into
-  realm gold. Each gear point adds +1 melee attack alongside level. Wizards
+  realm gold. Each gear point adds +1 damage to a landed hero hit. Wizards
   pay sages instead and never shop the forge.
 - Gear is shown in the hero inspector (`gear N`), the activity line, and as
   pale pips above the level pips on the map.
@@ -538,9 +538,10 @@ the gear economy, then the double-edged diplomacy/necromancy pass.
   blacksmith, guardhouse, ranger hut and mead hall **2x1**; wizard tower
   **1x2**; herbalist grove **2x2**; farm and house stay **1x1**.
 - Footprints are validated tile-by-tile, so every covered tile must be
-  charted, clear of dens/works, and have legal terrain. The grove may root
-  on forest or marsh as well as grass; other buildings still demand open
-  grass. Padding is now a one-tile ring around the whole footprint, not just
+  charted, clear of dens/works, and have legal terrain. The herbalist grove
+  and ranger hut may root on forest or marsh as well as grass; other
+  buildings still demand open grass. Padding is now a one-tile ring around
+  the whole footprint, not just
   the anchor tile.
 - Map art, construction sites, minimap blocks, placement ghosts, selection
   outlines and inspector hit-testing all span the full footprint. Tests keep
@@ -582,8 +583,59 @@ the gear economy, then the double-edged diplomacy/necromancy pass.
 - Tests: `tests/heroes_test.gd` covers dismissal and roster counts;
   `tests/agents_test.gd` covers farm/site demolition and the Palace refusal.
 
-Deferred to the rest of M7: graveyard/sewer risk buildings, tribute
-diplomacy, and the necromancer's undead economy.
+### M7.3 — Graveyard, sewers, tribute & the necromancer (built)
+
+- **Graveyard** (50g, 2x2): stores corpses from deaths nearby and slowly
+  fills its own stock. Without a shrine ward in range, a stocked graveyard
+  periodically raises a hostile undead raider that hunts nearby living folk.
+  A shrine's ward suppresses the risings and is surfaced in the inspector.
+  The graveyard independently adds 2 safe population for plague checks.
+- **Necromancer** hero class: drawn by a graveyard. While one is home, the
+  graveyard spends stored corpses to raise temporary **allied undead** (army
+  cap 3). Servants fight for the realm, join sieges, and lose loyalty over
+  time; expired servants crumble without a corpse.
+- **Sewers** (40g, 1x1): attracts rogues as a home hall, draws periodic rats,
+  and spoils stored provisions. Each sewer raises the safe population by 4
+  (base 6), as does each graveyard by 2. Every 60 ticks a crowded realm
+  rolls a 25% base plague chance,
+  plus 5% for each person beyond that safe capacity.
+- **Tribute** (25g, 200 ticks) on bandit camps and gnome enclaves, offered as
+  a second inspector action. Paid bandits stop mustering and release current
+  muggings; paid gnomes trade through the feud, cool kobold tension, and stop
+  claim friction/feud warbands while the tribute holds.
+- Combat/aggro treats rats and hostile undead as attackers, allied undead as
+  defenders, and siege pressure counts allied servants. Map/minimap/fog hide
+  hostile rats and undead until charted.
+- Tests: `tests/m7_rest_test.gd` covers content rows, corpse storage, risings,
+  necromancer raising/decay, shrine wards, rats/provision loss, plague control,
+  and bandit/gnome tribute behavior.
+
+### Hero combat tuning & explore bounties (built)
+
+- Hero base HP was cut by about 20% across the class table. Level-ups still
+  add 2 max HP and heal to full.
+- Hero attacks now roll accuracy: 40% at level 1, +5% per level, capped at
+  90%. Guards and allied undead remain deterministic.
+- Damage per landed hit is 4, +1 every three levels, plus gear; sieges use
+  the same roll and damage. This replaces the old level+1+gear deterministic
+  swing, so veterans hit more reliably rather than simply harder.
+- **Explore bounties** (20g, same 2g crown fee) can be posted on reachable
+  uncharted tiles. They stack, draw heroes toward that exact spot, show a
+  gold marker through the fog, and pay the arriving hero the net purse.
+- Tests: `heroes_test.gd` covers explore posting, stacking, targeting,
+  arrival payout, and charting; `hero_progression_test.gd` covers accuracy,
+  damage breakpoints, HP cuts, and probabilistic gear hits.
+
+### Player manual & in-game reference (built)
+
+- `MANUAL.md` is the player-facing guide: core loop, economy, fog and terrain,
+  every hall, hero attraction/levels/caps/gear, bounties, combat, ecology,
+  faction diplomacy, tribute, graveyards, sewers and recovery.
+- The bottom-right book button opens the same Markdown in a scrollable
+  in-game card. `scripts/manual.gd` renders its small Markdown subset to
+  BBCode, so the repository copy and the game text stay in sync.
+- `MANUAL.md` is included in the web export; `tests/manual_test.gd` guards
+  the file's major sections and the Markdown-to-BBCode conversion.
 
 ## M8 — Session layer & polish
 

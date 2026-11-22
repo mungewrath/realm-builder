@@ -74,7 +74,7 @@ Attraction decays with distance, so placement shapes hero movement.
 | ranger_hut | Ranger Hut | 30g | map edges revealed | ranger, druid | explore, protect | calms aggressive wildlife in radius |
 | mead_hall | Mead Hall | 45g | barbarian morale | barbarian | bounty (strong) | barbarians drink, then fight |
 | herbalist_grove | Herbalist Grove | 35g | healing herbs | druid, cleric | protect | heals without shrine; forest-friendly |
-| graveyard | Graveyard | 50g | corpse storage | necromancer | undead (dangerous) | double-edged: undead risks vs. necromancer power |
+| graveyard | Graveyard | 50g | corpse storage; +2 plague headroom | necromancer | undead (dangerous) | double-edged: undead risks vs. necromancer power |
 | sewers | Sewers | 40g | plague control | rogue (den) | — | rogues use as hideout; attracts rats |
 
 ### Flavor blurbs (inspector)

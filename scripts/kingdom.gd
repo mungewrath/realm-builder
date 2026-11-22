@@ -67,6 +67,14 @@ const RANGER_HUT_COST := 30
 const MEAD_HALL_COST := 45
 const HERBALIST_GROVE_COST := 35
 
+# M7.3 — the double-edged halls and diplomacy. The graveyard is corpse
+# storage that draws a necromancer but risks unquiet dead; sewers keep fever
+# down but draw rats from the filth. Tribute buys temporary peace.
+const GRAVEYARD_COST := 50
+const SEWERS_COST := 40
+const TRIBUTE_COST := 25
+const TRIBUTE_TICKS := 200
+
 const BUILDING_SIZES := {
 	"farm": Vector2i(1, 1),
 	"house": Vector2i(1, 1),
@@ -79,6 +87,8 @@ const BUILDING_SIZES := {
 	"ranger_hut": Vector2i(2, 1),
 	"mead_hall": Vector2i(2, 1),
 	"herbalist_grove": Vector2i(2, 2),
+	"graveyard": Vector2i(2, 2),
+	"sewers": Vector2i(1, 1),
 	"castle": Vector2i(3, 3),
 }
 
@@ -94,6 +104,8 @@ const BUILD_COSTS := {
 	"ranger_hut": RANGER_HUT_COST,
 	"mead_hall": MEAD_HALL_COST,
 	"herbalist_grove": HERBALIST_GROVE_COST,
+	"graveyard": GRAVEYARD_COST,
+	"sewers": SEWERS_COST,
 }
 
 # M6.3 — terrain actions. Drained marsh becomes farmland; cleared woods
@@ -110,27 +122,28 @@ const TERRAIN_WORK_TICKS := 4
 # their own judgment. The player nudges with buildings, gold, and bounty
 # flags — never commands. Adding a class is a content row, not code.
 # Base stats are tuned so a fresh hero can handle a small goblin mob
-# (2-3 raiders): goblins hit for 1 each per round, a level-1 hero swings
-# for 2 and breaks off to heal before dying.
+# (2-3 raiders): goblins hit for 1 each per round, while a level-1 hero
+# lands a heavier swing only about 40% of the time and breaks off to heal
+# before dying.
 const HERO_CLASSES := {
 	"rogue": {
 		"title": "Rogue",
-		"attracted_by": "tavern",
-		"hp": 10,
+		"attracted_by": ["tavern", "sewers"],
+		"hp": 8,
 		"weights": {"bounty": 4, "treasure": 9, "smite_evil": 1, "assist": 0,
 			"hunt": 4, "pray": 0, "carouse": 3},
 	},
 	"warrior": {
 		"title": "Warrior",
 		"attracted_by": ["guardhouse", "blacksmith"],
-		"hp": 14,
+		"hp": 11,
 		"weights": {"bounty": 8, "treasure": 4, "smite_evil": 3, "assist": 3,
 			"hunt": 3, "pray": 1, "carouse": 2},
 	},
 	"paladin": {
 		"title": "Paladin",
 		"attracted_by": "shrine",
-		"hp": 18,
+		"hp": 14,
 		"weights": {"bounty": 3, "treasure": 0, "smite_evil": 9, "assist": 4,
 			"hunt": 0, "pray": 6, "carouse": 0},
 	},
@@ -139,7 +152,7 @@ const HERO_CLASSES := {
 	"druid": {
 		"title": "Druid",
 		"attracted_by": "herbalist_grove",
-		"hp": 12,
+		"hp": 10,
 		"weights": {"bounty": 0, "treasure": 0, "smite_evil": 2, "assist": 1,
 			"hunt": 0, "pray": 3, "carouse": 0, "protect": 9},
 	},
@@ -149,30 +162,40 @@ const HERO_CLASSES := {
 	"dwarf": {
 		"title": "Dwarf Craftsman",
 		"attracted_by": "blacksmith",
-		"hp": 15,
+		"hp": 12,
 		"weights": {"bounty": 2, "treasure": 3, "smite_evil": 3, "assist": 8,
 			"hunt": 0, "pray": 0, "carouse": 2},
 	},
 	"wizard": {
 		"title": "Wizard",
 		"attracted_by": "wizard_tower",
-		"hp": 10,
+		"hp": 8,
 		"weights": {"bounty": 2, "treasure": 4, "smite_evil": 8, "assist": 1,
 			"hunt": 0, "pray": 2, "carouse": 0, "explore": 4},
 	},
 	"ranger": {
 		"title": "Ranger",
 		"attracted_by": "ranger_hut",
-		"hp": 12,
+		"hp": 10,
 		"weights": {"bounty": 2, "treasure": 2, "smite_evil": 3, "assist": 2,
 			"hunt": 6, "pray": 0, "carouse": 1, "protect": 5, "explore": 6},
 	},
 	"barbarian": {
 		"title": "Barbarian",
 		"attracted_by": "mead_hall",
-		"hp": 16,
+		"hp": 13,
 		"weights": {"bounty": 9, "treasure": 4, "smite_evil": 4, "assist": 1,
 			"hunt": 2, "pray": 0, "carouse": 4},
+	},
+	# M7.3: the shady late game. The necromancer is drawn by grave ground,
+	# smites evil in its own fashion, and turns stored corpses into temporary
+	# servants while the realm has a graveyard.
+	"necromancer": {
+		"title": "Necromancer",
+		"attracted_by": "graveyard",
+		"hp": 10,
+		"weights": {"bounty": 2, "treasure": 4, "smite_evil": 9, "assist": 0,
+			"hunt": 1, "pray": 0, "carouse": 0, "explore": 5},
 	},
 }
 # Ventures outrank leisure, leisure outranks idle strolling; ties break
@@ -208,6 +231,13 @@ const HERO_PRAY_TICKS := 6
 const HERO_HUNT_TICKS := 4
 const HERO_PROTECT_TICKS := 5
 const HERO_XP_PER_LEVEL := 4
+# A fresh hero is not a guaranteed hit. Accuracy climbs with level; damage
+# rises much more slowly than it used to, so veteran power is not raw DPS.
+const HERO_BASE_ACCURACY := 0.40
+const HERO_ACCURACY_PER_LEVEL := 0.05
+const HERO_ACCURACY_MAX := 0.90
+const HERO_BASE_DAMAGE := 4
+const HERO_DAMAGE_LEVEL_STEP := 3
 # M7.2 — heroes learn by doing. Each meaningful venture teaches a little;
 # the class's core pursuit teaches more, so a rogue grows by treasure and
 # a druid by tending the wilds, not only by killing things. Combat XP is
@@ -225,6 +255,7 @@ const HERO_CORE_ACTIVITY := {
 	"wizard": "explore",
 	"ranger": "explore",
 	"barbarian": "bounty",
+	"necromancer": "smite",
 }
 # Gear is bought from the blacksmith's forged stock, one point at a time.
 const GEAR_COST := 8
@@ -578,9 +609,49 @@ var mead_brewed := 0
 var herbs_grown := 0
 var curses_cured := 0
 var ranger_calm_radius := 8
+# M7.3 — graveyard, sewer and tribute tuning. Vars so tests can compress
+# risk cycles and pin down exact costs without waiting a whole session.
+var graveyards := 0
+var sewers := 0
+var graveyard_reach := 18
+var graveyard_risk_ticks := 45
+var graveyard_risk_chance := 0.65
+var grave_corpse_cap := 9
+var undead_loyalty_ticks := 160
+var undead_army_cap := 3
+var shrine_ward_radius := 8
+var corpses_buried := 0
+var undead_risen := 0
+var undead_raised := 0
+var undead_lost := 0
+var undead_destroyed := 0
+var undead_warded := 0
+
+var sewer_rat_ticks := 120
+var sewer_rats_per_building := 2
+var rat_spoil := 2
+var rats_spawned := 0
+var rats_destroyed := 0
+var food_spoiled := 0
+var plague_check_ticks := 60
+var plague_chance := 0.25
+var plague_overcrowd_chance := 0.05
+var plague_safe_base := 6
+var plague_sewer_capacity := 4
+var plague_graveyard_capacity := 2
+var _plague_left := 60
+var plague_outbreaks := 0
+
+var tribute_cost := TRIBUTE_COST
+var tribute_ticks := TRIBUTE_TICKS
+var tribute_paid := 0
+
 var bounties := {} # den tile -> {reward}
 var bounties_posted := 0
 var bounties_paid := 0
+var explore_bounties := {} # uncharted tile -> {reward}
+var explore_bounties_posted := 0
+var explore_bounties_paid := 0
 var loot_piles := {} # tile -> gold
 
 # M5 — fog state: one layer. `explored` is the map you have charted, and
@@ -690,7 +761,8 @@ func _fog_tick() -> void:
 	for a in agents:
 		# Only the realm's folk chart the map. Goblins, bandits and wild
 		# creatures reveal nothing — the wild keeps its secrets.
-		if a.kind == "goblin" or a.kind == "creature" or a.kind == "bandit":
+		if a.kind == "goblin" or a.kind == "creature" or a.kind == "bandit" \
+				or a.kind == "rat" or a.kind == "undead":
 			continue
 		var t: Vector2i = a.tile()
 		if t != a.fog_tile:
@@ -744,9 +816,9 @@ func building_origin_at(p: Vector2i) -> Vector2i:
 func _terrain_allows(kind: String, t: int) -> bool:
 	if t == world.GRASS:
 		return true
-	# The grove is a piece of tended wild land: it can root in marsh or woods
-	# as readily as on open grass.
-	if kind == "herbalist_grove":
+	# The grove and ranger hut are tended wild land: they can root in marsh
+	# or woods as readily as on open grass.
+	if kind == "herbalist_grove" or kind == "ranger_hut":
 		return t == world.FOREST or t == world.SWAMP
 	return false
 
@@ -918,6 +990,15 @@ func complete_building(p: Vector2i) -> void:
 			markets += 1
 		"shrine":
 			shrines += 1
+		"graveyard":
+			graveyards += 1
+			# The first burial is already in the ground; the grave earth
+			# starts with one corpse to draw on.
+			b.corpses = 1
+			b.risk = 0
+		"sewers":
+			sewers += 1
+			b.rat_left = sewer_rat_ticks
 	# A newly finished hero hall pulls the next attraction roll forward:
 	# heroes show up within seconds of the door opening, not after a stale
 	# cycle has ground its way around.
@@ -952,6 +1033,8 @@ func update() -> void:
 		_spawn_collector()
 	_accrue_tax()
 	_halls_tick()
+	_risk_buildings_tick()
+	_plague_tick()
 	_assign_jobs()
 	_route_collector()
 	if raids_enabled:
@@ -1167,6 +1250,324 @@ func _herbalist_grove_tick(p: Vector2i, b: Dictionary) -> void:
 	b.herbs = int(b.herbs) - 1
 	curses_cured += 1
 	last_event = "Herbalists lift a hag's curse from the fields"
+
+# --- M7.3: graveyard/shadow economy, sewers, and tribute ------------------
+
+func _risk_buildings_tick() -> void:
+	# The realm's double-edged halls keep their own clocks. Graveyards
+	# collect the fallen and either raise servants for a necromancer or
+	# let the unquiet claw free; sewers draw rats out of the filth.
+	for p in buildings.keys():
+		var b: Dictionary = buildings[p]
+		if not b.complete:
+			continue
+		match b.kind:
+			"graveyard":
+				_graveyard_tick(p, b)
+			"sewers":
+				_sewer_tick(p, b)
+	_undead_tick()
+	_rat_tick()
+
+func _graveyard_tick(p: Vector2i, b: Dictionary) -> void:
+	b.risk = int(b.get("risk", 0)) + 1
+	if int(b.risk) < graveyard_risk_ticks:
+		return
+	b.risk = 0
+	if int(b.get("corpses", 0)) <= 0:
+		return
+	# A necromancer turns the grave's hoard of corpses into loyal servants;
+	# without one, the same stock is a hazard.
+	if _has_necromancer():
+		if _count_undead("ally") >= undead_army_cap:
+			return
+		b.corpses = int(b.corpses) - 1
+		_spawn_undead(p, false)
+		undead_raised += 1
+		last_event = "A necromancer raises a grave servant"
+		return
+	if _shrine_ward_at(p):
+		undead_warded += 1
+		if undead_warded == 1:
+			last_event = "A shrine's ward keeps the graveyard quiet"
+		return
+	if rng.randf() > graveyard_risk_chance:
+		return
+	if _count_undead("hostile") >= undead_army_cap:
+		return
+	b.corpses = int(b.corpses) - 1
+	_spawn_undead(p, true)
+	undead_risen += 1
+	last_event = "Unquiet dead claw free of the graveyard!"
+
+func _has_necromancer() -> bool:
+	for a in agents:
+		if a.kind == "hero" and a.hero_class == "necromancer" \
+				and not _removals.has(a):
+			return true
+	return false
+
+func _count_undead(side: String) -> int:
+	var n := 0
+	for a in agents:
+		if a.kind == "undead" and a.undead_side == side \
+				and not _removals.has(a):
+			n += 1
+	return n
+
+func _count_agents_home(home_pos: Vector2i, kind: String) -> int:
+	var n := 0
+	for a in agents:
+		if a.home == home_pos and a.kind == kind and not _removals.has(a):
+			n += 1
+	return n
+
+func _shrine_ward_at(p: Vector2i) -> bool:
+	var r2: int = shrine_ward_radius * shrine_ward_radius
+	for q in buildings:
+		var b: Dictionary = buildings[q]
+		if b.complete and b.kind == "shrine" \
+				and Vector2(q).distance_squared_to(Vector2(p)) <= r2:
+			return true
+	return false
+
+func _spawn_undead(grave: Vector2i, hostile: bool) -> void:
+	var a = AgentC.new()
+	a.species = "ghoul" if hostile else "skeleton"
+	a.setup(self, "undead", grave)
+	a.home = grave
+	a.undead_side = "hostile" if hostile else "ally"
+	a.speed = 2.2 if hostile else 2.0
+	a.max_hp = 6 if hostile else 5
+	a.hp = a.max_hp
+	a.decay_left = 0 if hostile else undead_loyalty_ticks
+	a.state = AgentC.IDLE
+	a.purpose = ""
+	agents.append(a)
+
+func _undead_tick() -> void:
+	# Hostile dead seek the living; a necromancer's servants march on the
+	# realm's enemies until their loyalty runs out.
+	for a in agents:
+		if a.kind != "undead" or _removals.has(a):
+			continue
+		if a.undead_side == "ally":
+			a.decay_left = int(a.decay_left) - 1
+			if int(a.decay_left) <= 0:
+				_removals.append(a)
+				undead_lost += 1
+				last_event = "The raised dead crumble back to dust"
+				continue
+		if a.fighting or a.state != AgentC.IDLE:
+			continue
+		if a.undead_side == "ally":
+			var den := _nearest_den(a.tile())
+			if den.x >= 0:
+				a.quest_den = den
+				a.assign(den_doorstep(den, a.tile()), AgentC.ASSAULT)
+				continue
+			var foe = _nearest_foe_near(a, a.home, 18)
+			if foe != null:
+				a.chase(foe)
+				continue
+			a.assign(_wilds_spot(a.home, 4, a.tile()), AgentC.WANDER)
+			a.behavior_left = 20
+			continue
+		var victim = _nearest_living_near(a, a.home, 18)
+		if victim != null:
+			a.chase(victim)
+			continue
+		var farm := _nearest_complete("farm", a.tile())
+		if farm.x < 0:
+			farm = _nearest_complete("house", a.tile())
+		if farm.x >= 0:
+			a.assign(farm, AgentC.RAID)
+			continue
+		a.assign(_wilds_spot(a.home, 4, a.tile()), AgentC.WANDER)
+		a.behavior_left = 20
+
+func _nearest_foe_near(from_agent, center: Vector2i, radius: int):
+	var best = null
+	var best_d := INF
+	var r2 := radius * radius
+	for e in agents:
+		if e == from_agent or e.hp <= 0 or _removals.has(e):
+			continue
+		if not _is_hostile_agent(e):
+			continue
+		var d := Vector2(e.tile()).distance_squared_to(Vector2(center))
+		if d > r2 or d >= best_d:
+			continue
+		best_d = d
+		best = e
+	return best
+
+func _nearest_living_near(from_agent, center: Vector2i, radius: int):
+	var best = null
+	var best_d := INF
+	var r2 := radius * radius
+	for e in agents:
+		if e == from_agent or e.hp <= 0 or _removals.has(e):
+			continue
+		if e.kind != "hero" and e.kind != "guard" and e.kind != "peasant":
+			continue
+		var d := Vector2(e.tile()).distance_squared_to(Vector2(center))
+		if d > r2 or d >= best_d:
+			continue
+		best_d = d
+		best = e
+	return best
+
+func undead_raid(u) -> void:
+	# The unquiet dead do not loot; they spoil what the living need. A farm
+	# loses provisions, a house loses coin to broken stores and panic.
+	if buildings.has(u.target) and buildings[u.target].complete:
+		var b: Dictionary = buildings[u.target]
+		match b.kind:
+			"farm":
+				var spoiled: int = mini(rat_spoil, food_delivered)
+				food_delivered -= spoiled
+				food_spoiled += spoiled
+				last_event = "Unquiet dead spoil provisions in the fields!"
+			"house":
+				var lost: int = mini(2, gold)
+				gold -= lost
+				last_event = "Unquiet dead claw at a house in the night!"
+
+func undead_assault_tick(u) -> void:
+	# The den's damage comes from the combat step's siege accounting; the
+	# servant lingers while its target stands, then fades when the lair is
+	# cleared or its loyalty expires.
+	if not dens.has(u.quest_den):
+		u.state = AgentC.IDLE
+		u.purpose = ""
+		return
+	u.work_left = 1
+
+func _sewer_tick(p: Vector2i, b: Dictionary) -> void:
+	b.rat_left = int(b.get("rat_left", sewer_rat_ticks)) - 1
+	if int(b.rat_left) > 0:
+		return
+	b.rat_left = sewer_rat_ticks
+	if _count_agents_home(p, "rat") >= sewer_rats_per_building:
+		return
+	_spawn_rat(p)
+
+func _spawn_rat(sewer_pos: Vector2i) -> void:
+	var a = AgentC.new()
+	a.species = "rat"
+	a.setup(self, "rat", sewer_pos)
+	a.home = sewer_pos
+	a.speed = 3.2
+	a.max_hp = 2
+	a.hp = a.max_hp
+	agents.append(a)
+	rats_spawned += 1
+
+func _rat_tick() -> void:
+	for a in agents:
+		if a.kind != "rat" or _removals.has(a) or a.fighting:
+			continue
+		if a.state != AgentC.IDLE:
+			continue
+		if a.behavior_left > 0:
+			a.behavior_left -= 1
+			continue
+		var farm := _nearest_complete("farm", a.tile())
+		if farm.x >= 0:
+			a.assign(farm, AgentC.RAID)
+			a.behavior_left = 45
+		else:
+			a.assign(_wilds_spot(a.home, 4, a.tile()), AgentC.WANDER)
+			a.behavior_left = 30
+
+func rat_raid(a) -> void:
+	# Rats do not raze; they get into the stores and spoil what they cannot
+	# eat. Guards and heroes can cut them down before the damage is done.
+	if buildings.has(a.target) and buildings[a.target].complete:
+		var spoiled: int = mini(rat_spoil, food_delivered)
+		food_delivered -= spoiled
+		food_spoiled += spoiled
+		last_event = "Sewer rats spoil provisions in the larder!"
+
+func _plague_tick() -> void:
+	# Crowded houses breed fever; drains and sewers keep it at bay. The
+	# risk only starts once a settlement outgrows its sanitation.
+	_plague_left -= 1
+	if _plague_left > 0:
+		return
+	_plague_left = plague_check_ticks
+	var chance := _plague_chance_for(pop)
+	if chance <= 0.0 or rng.randf() > chance:
+		return
+	pop = maxi(1, pop - 1)
+	shortage_mark = tick
+	plague_outbreaks += 1
+	last_event = "Fever spreads through the crowded houses!"
+
+func _plague_chance_for(population: int) -> float:
+	# A base outbreak chance, rising sharply for every person the realm
+	# cannot safely house. Sewers and burial ground raise that safe capacity.
+	var safe: int = plague_safe_base + sewers * plague_sewer_capacity \
+		+ _graveyard_plague_relief()
+	var over := population - safe
+	if over <= 0:
+		return 0.0
+	return minf(1.0, plague_chance + plague_overcrowd_chance * float(over))
+
+func _graveyard_plague_relief() -> int:
+	var relief := 0
+	for p in buildings:
+		var b: Dictionary = buildings[p]
+		if b.complete and b.kind == "graveyard":
+			relief += plague_graveyard_capacity
+	return relief
+
+# --- tribute diplomacy ----------------------------------------------------
+
+func tribute_active(p: Vector2i) -> bool:
+	return dens.has(p) and int(dens[p].get("tribute_until", 0)) > tick
+
+func can_pay_tribute(p: Vector2i) -> bool:
+	if not dens.has(p):
+		return false
+	var kind: String = dens[p].get("kind", "")
+	if kind != "bandit_camp" and kind != "gnome_enclave":
+		return false
+	return not tribute_active(p)
+
+func pay_tribute(p: Vector2i) -> bool:
+	if not can_pay_tribute(p):
+		last_event = "There is no tribute to pay here"
+		return false
+	if gold < tribute_cost:
+		last_event = "Not enough gold for tribute"
+		return false
+	gold -= tribute_cost
+	var den: Dictionary = dens[p]
+	den.tribute_until = tick + tribute_ticks
+	tribute_paid += 1
+	if den.get("kind", "") == "bandit_camp":
+		den.next_muster = bandit_muster_ticks
+		last_event = "Bandits take the tribute and stay their hands"
+	else:
+		# Gnome coin buys a truce in the hills; the kobold feud cools while
+		# the tinkers' tribute keeps the claim dispute off the ledger.
+		shift_tension("kobolds", "gnomes", 3)
+		last_event = "Gnome tribute buys a truce in the hills"
+	return true
+
+func _gnome_tribute_active() -> bool:
+	for p in dens:
+		if dens[p].get("kind", "") == "gnome_enclave" and tribute_active(p):
+			return true
+	return false
+
+func _gnome_warded_pair(a: String, b: String) -> bool:
+	if not _gnome_tribute_active():
+		return false
+	return (a == "kobolds" and b == "gnomes") \
+		or (a == "gnomes" and b == "kobolds")
 
 func _nearest_cursed_farm(from: Vector2i) -> Vector2i:
 	var best := Vector2i(-1, -1)
@@ -1720,8 +2121,19 @@ func _remove_building(p: Vector2i) -> Dictionary:
 				markets -= 1
 			"shrine":
 				shrines -= 1
+			"graveyard":
+				graveyards = maxi(0, graveyards - 1)
+				_remove_home_agents(p, ["undead"])
+			"sewers":
+				sewers = maxi(0, sewers - 1)
+				_remove_home_agents(p, ["rat"])
 	buildings.erase(p)
 	return b
+
+func _remove_home_agents(home_pos: Vector2i, kinds: Array) -> void:
+	for a in agents:
+		if a.home == home_pos and kinds.has(a.kind) and not _removals.has(a):
+			_removals.append(a)
 
 func _raze_building(p: Vector2i) -> void:
 	var b := _remove_building(p)
@@ -2376,6 +2788,8 @@ func _claim_friction_tick() -> void:
 			var f2: String = DEN_KINDS[dens[q].get("kind", "goblin_den")].faction
 			if f1 == f2 or f2 == "wilders":
 				continue
+			if _gnome_warded_pair(f1, f2):
+				continue # tribute keeps the hill feud off the ledger
 			if Vector2(p).distance_squared_to(Vector2(q)) \
 					> den_claim_radius * den_claim_radius:
 				continue
@@ -2399,6 +2813,7 @@ func _kobold_tick() -> void:
 		# Only a burrow whose claim reaches the enclave can rob it: distant
 		# kobolds have no quarrel with the hills' far side.
 		var enclave_hot: bool = enclave.x >= 0 \
+			and not _gnome_tribute_active() \
 			and Vector2(enclave).distance_squared_to(Vector2(p)) \
 				<= den_claim_radius * den_claim_radius
 		var steal_farm := farm.x >= 0 and not is_cursed(farm)
@@ -2428,7 +2843,8 @@ func _gnome_tick() -> void:
 		if int(den.trade_left) > 0:
 			continue
 		den.trade_left = gnome_trade_ticks
-		if tension_between("gnomes", "kobolds") <= -2:
+		if tension_between("gnomes", "kobolds") <= -2 \
+				and not _gnome_tribute_active():
 			continue # the feud keeps the tinkers behind their walls
 		gold += gnome_trade_gold
 		den.gold = int(den.gold) + 0 # traded away, not hoarded
@@ -2446,6 +2862,8 @@ func _feud_tick() -> void:
 	_feud_left = feud_ticks
 	if tension_between("kobolds", "gnomes") > -2:
 		return
+	if _gnome_tribute_active():
+		return # paid coin keeps the warbands home
 	for p in dens:
 		if dens[p].get("kind", "") != "kobold_den":
 			continue
@@ -2514,6 +2932,8 @@ func _bandit_tick() -> void:
 		var den: Dictionary = dens[p]
 		if den.get("kind", "") != "bandit_camp":
 			continue
+		if tribute_active(p):
+			continue # bought-off camps do not muster
 		den.next_muster = int(den.get("next_muster", bandit_muster_ticks)) - 1
 		if int(den.next_muster) > 0:
 			continue
@@ -2526,6 +2946,14 @@ func _bandit_tick() -> void:
 			_spawn_bandit(p)
 	for a in agents:
 		if a.kind != "bandit" or a.fighting:
+			continue
+		if tribute_active(a.home):
+			# Paid tribute: the camp stands down and releases any quarry.
+			if a.purpose == AgentC.MUG:
+				a.target_agent = null
+				a.purpose = ""
+				a.state = AgentC.IDLE
+				a.path = []
 			continue
 		if a.purpose == AgentC.MUG:
 			var quarry = a.target_agent
@@ -2631,6 +3059,33 @@ func is_cursed(p: Vector2i) -> bool:
 	return not b.is_empty() and int(b.get("cursed_until", 0)) > tick
 
 # --- M4: heroes & attraction ------------------------------------------------
+
+func can_post_explore_bounty(p: Vector2i) -> bool:
+	# The flag has to sit on land a hero can actually reach, and only land
+	# the realm has not charted yet. Existing flags may be topped up later.
+	if not fog_enabled or world == null or not world.in_bounds(p):
+		return false
+	if explored_at(p):
+		return false
+	return not find_path(keep_pos, p).is_empty()
+
+func post_explore_bounty(p: Vector2i) -> bool:
+	# A bounty on a blank patch of map: heroes are invited to go chart it.
+	if not explore_bounties.has(p) and not can_post_explore_bounty(p):
+		last_event = "Only reachable uncharted ground can take an explore bounty"
+		return false
+	if gold < BOUNTY_FEE:
+		last_event = "Not enough gold for the explore bounty"
+		return false
+	gold -= BOUNTY_FEE
+	var net: int = BOUNTY_FEE - BOUNTY_OVERHEAD
+	if explore_bounties.has(p):
+		explore_bounties[p].reward += net
+	else:
+		explore_bounties[p] = {"reward": net}
+		explore_bounties_posted += 1
+	last_event = "A bounty flag marks uncharted ground!"
+	return true
 
 func post_bounty(den_pos: Vector2i) -> bool:
 	# The player's one-tap nudge: a flag with gold on it. Heroes weigh it
@@ -2795,6 +3250,19 @@ func _nearest_pile(from: Vector2i) -> Vector2i:
 			best = p
 	return best
 
+func _best_explore_bounty(from: Vector2i) -> Vector2i:
+	var best := Vector2i(-1, -1)
+	var best_reward := -1
+	var best_d := INF
+	for p in explore_bounties:
+		var reward: int = int(explore_bounties[p].reward)
+		var d := Vector2(p).distance_squared_to(Vector2(from))
+		if reward > best_reward or (reward == best_reward and d < best_d):
+			best_reward = reward
+			best_d = d
+			best = p
+	return best
+
 func _best_bounty(from: Vector2i) -> Vector2i:
 	var best := Vector2i(-1, -1)
 	var best_reward := -1
@@ -2852,6 +3320,11 @@ func hero_goal_scores(h) -> Dictionary:
 		# tints how tempting flags are at all.
 		scores["bounty"] = int(w.bounty) + int(best_reward / 4.0) \
 			+ _mead_morale_bonus()
+	var explore_spot := _best_explore_bounty(h.tile())
+	if explore_spot.x >= 0:
+		var explore_reward := int(explore_bounties[explore_spot].reward)
+		scores["explore"] = 8 + int(w.get("explore", 0)) \
+			+ int(explore_reward / 4.0)
 	var known_dens := _dens_known_to_realm()
 	if int(w.smite_evil) > 0 and not known_dens.is_empty():
 		var top := 1
@@ -2905,7 +3378,7 @@ func hero_goal_scores(h) -> Dictionary:
 	# Unknown land beats idle strolling: with no venture on the books, a
 	# hero heads for the frontier about half the time (a coin-flip against
 	# patrolling, broken toward exploring on the tie).
-	if _explore_target(h.tile()).x >= 0:
+	if not scores.has("explore") and _explore_target(h.tile()).x >= 0:
 		scores["explore"] = 1 + rng.randi_range(0, 1) \
 			+ int(w.get("explore", 0))
 	# Over the realm's means, and already warned: leaving is now one of the
@@ -2998,10 +3471,15 @@ func _piles_known_to_realm() -> Array:
 	return known
 
 func _explore_target(from: Vector2i) -> Vector2i:
-	# Nearest uncharted walkable tile within a short walk. A local flood is
-	# enough: heroes need a frontier to wander toward, not a proof that some
-	# far corner of the map is reachable. The depth cap also stops a hero in
-	# a fully charted pocket from flooding the realm every decision.
+	# A posted flag outranks the nearest frontier: that is the whole point
+	# of the bounty. With no flag, find the nearest uncharted walkable tile
+	# within a short walk. A local flood is enough: heroes need a frontier
+	# to wander toward, not a proof that some far corner is reachable. The
+	# depth cap also stops a hero in a fully charted pocket from flooding
+	# the realm every decision.
+	var bounty_spot := _best_explore_bounty(from)
+	if bounty_spot.x >= 0:
+		return bounty_spot
 	if not fog_enabled:
 		return Vector2i(-1, -1)
 	if uncharted_open.is_empty():
@@ -3101,7 +3579,7 @@ func _nearest_visible_foe(h):
 	var best = null
 	var best_d := INF
 	for e in agents:
-		if e.kind != "goblin" and e.kind != "bandit":
+		if not _is_hostile_agent(e):
 			continue
 		if e.hp <= 0 or _removals.has(e):
 			continue
@@ -3273,6 +3751,14 @@ func hero_activity_xp(h, activity: String) -> int:
 	return gained
 
 func hero_explore(h) -> void:
+	# Arriving at an explore flag pays the hero who made the journey.
+	if h.tile() == h.target and explore_bounties.has(h.target):
+		var reward: int = int(explore_bounties[h.target].reward)
+		explore_bounties.erase(h.target)
+		h.pouch += reward
+		explore_bounties_paid += reward
+		last_event = "The %s charts the bounty ground and claims the purse!" \
+			% HERO_CLASSES[h.hero_class].title
 	hero_activity_xp(h, "explore")
 
 func hero_buy_gear(h) -> void:
@@ -3384,78 +3870,108 @@ func hero_assault_tick(h) -> void:
 		return
 	h.work_left = 1
 
+func _is_hostile_agent(a) -> bool:
+	if a.kind == "goblin" or a.kind == "bandit" or a.kind == "rat":
+		return true
+	return a.kind == "undead" and a.undead_side == "hostile"
+
+func _is_defender_agent(a) -> bool:
+	if a.kind == "guard" or a.kind == "hero":
+		return true
+	return a.kind == "undead" and a.undead_side == "ally"
+
 func adjacent_foes(a) -> int:
-	# Foes that make a fighter hold ground: guards and heroes hem goblins
-	# and bandits in; goblins and bandits hem heroes in.
+	# Foes that make a fighter hold ground: the realm's defenders hem the
+	# wild's raiders in, and every hostile thing hems the defenders in.
 	var n := 0
+	var a_hostile := _is_hostile_agent(a)
+	var a_defender := _is_defender_agent(a)
+	if not a_hostile and not a_defender:
+		return 0
 	for other in agents:
 		if other == a:
 			continue
-		if a.kind == "goblin" or a.kind == "bandit":
-			if (other.kind == "guard" or other.kind == "hero") \
-					and other.adjacent_to(a.tile()):
-				n += 1
-		elif a.kind == "hero":
-			if (other.kind == "goblin" or other.kind == "bandit") \
-					and other.adjacent_to(a.tile()):
-				n += 1
+		if a_hostile and _is_defender_agent(other) \
+				and other.adjacent_to(a.tile()):
+			n += 1
+		elif a_defender and _is_hostile_agent(other) \
+				and other.adjacent_to(a.tile()):
+			n += 1
 	return n
+
+func hero_accuracy(h) -> float:
+	return minf(HERO_ACCURACY_MAX, HERO_BASE_ACCURACY \
+		+ HERO_ACCURACY_PER_LEVEL * float(h.level - 1))
+
+func hero_melee_damage(h) -> int:
+	return HERO_BASE_DAMAGE + floori(float(h.level - 1) \
+		/ float(HERO_DAMAGE_LEVEL_STEP)) + int(h.gear)
 
 func _combat_step() -> void:
 	# Simple attrition: foes on neighbouring tiles trade blows. A fighter who
 	# drops to the flee threshold breaks for home; anyone at 0 hp is reaped.
-	# Heroes join with melee weight = level, so veteran heroes hit harder.
+	# Heroes roll accuracy and hit for a flat, slowly level-scaled amount.
 	var gobs := []
 	var guards := []
 	var heroes := []
 	var bands := []
+	var rats := []
+	var allies := []
+	var hostile_dead := []
 	for a in agents:
 		if a.kind == "goblin":
 			gobs.append(a)
 		elif a.kind == "bandit":
 			bands.append(a)
+		elif a.kind == "rat":
+			rats.append(a)
 		elif a.kind == "guard":
 			guards.append(a)
 		elif a.kind == "hero":
 			heroes.append(a)
-	var hostiles: Array = gobs + bands
+		elif a.kind == "undead":
+			if a.undead_side == "ally":
+				allies.append(a)
+			else:
+				hostile_dead.append(a)
+	var hostiles: Array = gobs + bands + rats + hostile_dead
+	var defenders: Array = guards + heroes + allies
 	for foe in hostiles:
-		var attackers := 0
+		var damage := 0
+		var hitters := []
 		for g in guards:
 			if g.adjacent_to(foe.tile()):
-				attackers += 1
+				damage += 1
 		for h in heroes:
-			# A hero swings harder than rank alone: level + 1, plus one for
-			# every point of forged gear, so a well-equipped hero carves
-			# through a warband a fresh one would only survive.
-			if h.adjacent_to(foe.tile()):
-				attackers += h.level + 1 + h.gear
-		if attackers > 0:
+			if not h.adjacent_to(foe.tile()):
+				continue
+			# Heroes can miss. Accuracy rises with level, while damage per
+			# hit rises only every few levels; gear still adds a point.
+			if rng.randf() < hero_accuracy(h):
+				damage += hero_melee_damage(h)
+				hitters.append(h)
+		for u in allies:
+			if u.adjacent_to(foe.tile()):
+				damage += 2
+		if damage > 0:
 			# Combat interrupts behavior: the foe turns to defend itself.
 			foe.fighting = true
 			foe.behavior_left = 0
 			var wounded: bool = foe.hp > 0
-			foe.hurt(attackers)
+			foe.hurt(damage)
 			if wounded and foe.hp <= 0:
-				# The kill is credited to the heroes who landed it.
-				for h in heroes:
-					if h.adjacent_to(foe.tile()):
-						_hero_gain_xp(h, 1)
-	for g in guards:
+				# The kill is credited to the heroes who landed a blow.
+				for h in hitters:
+					_hero_gain_xp(h, 1)
+	for d in defenders:
 		var enemies := 0
 		for foe in hostiles:
-			if foe.adjacent_to(g.tile()):
+			if foe.adjacent_to(d.tile()):
 				enemies += 1
 		if enemies > 0:
-			g.hurt(enemies)
-	for h in heroes:
-		var enemies := 0
-		for foe in hostiles:
-			if foe.adjacent_to(h.tile()):
-				enemies += 1
-		if enemies > 0:
-			h.fighting = true
-			h.hurt(enemies)
+			if d.kind == "hero" or d.kind == "undead":
+				d.fighting = true
+			d.hurt(enemies)
 	for p in dens.duplicate():
 		var den: Dictionary = dens[p]
 		# Hostile lairs are always siege targets; a bounty makes any other
@@ -3467,8 +3983,11 @@ func _combat_step() -> void:
 			if g.adjacent_to(p):
 				besiegers += 1
 		for h in heroes:
-			if h.adjacent_to(p):
-				besiegers += h.level
+			if h.adjacent_to(p) and rng.randf() < hero_accuracy(h):
+				besiegers += hero_melee_damage(h)
+		for u in allies:
+			if u.adjacent_to(p):
+				besiegers += 2
 		if besiegers > 0:
 			den.hp -= besiegers
 			if den.hp <= 0:
@@ -3519,14 +4038,19 @@ func _reap() -> void:
 	var fallen_hero_class := ""
 	for a in agents:
 		if a.hp <= 0 and (a.kind == "guard" or a.kind == "goblin" \
-				or a.kind == "bandit" or a.kind == "hero") \
+				or a.kind == "bandit" or a.kind == "hero" \
+				or a.kind == "undead" or a.kind == "rat") \
 				and not _removals.has(a):
 			_removals.append(a)
 			match a.kind:
 				"guard":
 					guards_fallen += 1
 					guard_fell = true
+					_record_corpse(a.tile())
+				"goblin":
+					_record_corpse(a.tile())
 				"bandit":
+					_record_corpse(a.tile())
 					# A cut-down bandit spills what he lifted onto the road.
 					if int(a.carrying) > 0:
 						loot_piles[a.tile()] = int(loot_piles.get(a.tile(), 0)) \
@@ -3537,8 +4061,16 @@ func _reap() -> void:
 					# — a rogue, say — can race to it.
 					heroes_fallen += 1
 					fallen_hero_class = a.hero_class
+					_record_corpse(a.tile())
 					if a.pouch > 0:
 						loot_piles[a.tile()] = int(loot_piles.get(a.tile(), 0)) + a.pouch
+				"undead":
+					if a.undead_side == "ally":
+						undead_lost += 1
+					else:
+						undead_destroyed += 1
+				"rat":
+					rats_destroyed += 1
 	if guard_fell:
 		last_event = "A guard fell in battle!"
 	elif fallen_hero_class != "":
@@ -3546,6 +4078,29 @@ func _reap() -> void:
 	for x in _removals:
 		agents.erase(x)
 	_removals.clear()
+
+func _record_corpse(p: Vector2i) -> void:
+	# The nearest graveyard within its reach takes the body. Corpses feed
+	# either the necromancer's servants or the graveyard's unquiet risk.
+	var best := Vector2i(-1, -1)
+	var best_d := INF
+	var reach_sq: int = graveyard_reach * graveyard_reach
+	for q in buildings:
+		var b: Dictionary = buildings[q]
+		if not b.complete or b.kind != "graveyard":
+			continue
+		var d := Vector2(q).distance_squared_to(Vector2(p))
+		if d > reach_sq or d >= best_d:
+			continue
+		best_d = d
+		best = q
+	if best.x < 0:
+		return
+	var grave: Dictionary = buildings[best]
+	if int(grave.get("corpses", 0)) >= grave_corpse_cap:
+		return
+	grave.corpses = int(grave.get("corpses", 0)) + 1
+	corpses_buried += 1
 
 func _spawn_guard(guardhouse: Vector2i) -> void:
 	var a = AgentC.new()

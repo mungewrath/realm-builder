@@ -29,6 +29,8 @@ const BUILDING_COLORS := {
 	"ranger_hut": Color(0.34, 0.46, 0.28),
 	"mead_hall": Color(0.62, 0.45, 0.24),
 	"herbalist_grove": Color(0.38, 0.62, 0.36),
+	"graveyard": Color(0.36, 0.37, 0.35),
+	"sewers": Color(0.3, 0.34, 0.31),
 }
 
 const HERO_COLORS := {
@@ -40,6 +42,7 @@ const HERO_COLORS := {
 	"wizard": Color(0.45, 0.5, 0.85),
 	"ranger": Color(0.42, 0.62, 0.32),
 	"barbarian": Color(0.78, 0.38, 0.2),
+	"necromancer": Color(0.38, 0.3, 0.5),
 }
 
 const GOLD := Color(0.92, 0.78, 0.2)
@@ -225,6 +228,9 @@ func _draw() -> void:
 			if _fog_level(p) == 0:
 				continue
 			_draw_loot_pile(p)
+	if sim != null and sim.get("explore_bounties") != null:
+		for p in sim.explore_bounties:
+			_draw_explore_bounty_flag(p)
 	if sim != null:
 		_draw_agents()
 	_draw_placement()
@@ -247,18 +253,40 @@ func _draw_placement() -> void:
 	var footprint := Vector2(rect.size * TILE)
 	var tint := Color(0.35, 0.95, 0.45) if placement_valid \
 		else Color(1.0, 0.28, 0.22)
-	# Outline the footprint plus the required one-tile breathing room.
+	# Outline the footprint plus the required one-tile breathing room, with
+	# small cut corners so the ghost reads as a placement card, not a slab.
 	var pad_origin := origin - Vector2(TILE, TILE)
 	var pad_size := footprint + Vector2(TILE * 2, TILE * 2)
-	draw_rect(Rect2(pad_origin, pad_size),
-		Color(tint.r, tint.g, tint.b, 0.12), true)
-	draw_rect(Rect2(pad_origin, pad_size),
-		Color(tint.r, tint.g, tint.b, 0.65), false, 2.0)
+	var pad_points := _beveled_rect(Rect2(pad_origin, pad_size), 6.0)
+	draw_colored_polygon(pad_points, Color(tint.r, tint.g, tint.b, 0.12))
+	_draw_closed_polyline(pad_points, Color(tint.r, tint.g, tint.b, 0.65))
 	_draw_building(placement_tile, {"kind": placement_kind, "complete": true})
-	draw_rect(Rect2(origin, footprint - Vector2(1, 1)),
-		Color(tint.r, tint.g, tint.b, 0.38), true)
-	draw_rect(Rect2(origin + Vector2(1, 1), footprint - Vector2(3, 3)),
-		tint, false, 2.0)
+	var fill_points := _beveled_rect(
+		Rect2(origin, footprint - Vector2(1, 1)), 4.0)
+	draw_colored_polygon(fill_points, Color(tint.r, tint.g, tint.b, 0.38))
+	var edge_points := _beveled_rect(
+		Rect2(origin + Vector2(1, 1), footprint - Vector2(3, 3)), 3.0)
+	_draw_closed_polyline(edge_points, tint)
+
+func _beveled_rect(rect: Rect2, bevel: float) -> PackedVector2Array:
+	var b: float = minf(bevel, minf(rect.size.x, rect.size.y) * 0.5)
+	var right: float = rect.position.x + rect.size.x
+	var bottom: float = rect.position.y + rect.size.y
+	return PackedVector2Array([
+		Vector2(rect.position.x + b, rect.position.y),
+		Vector2(right - b, rect.position.y),
+		Vector2(right, rect.position.y + b),
+		Vector2(right, bottom - b),
+		Vector2(right - b, bottom),
+		Vector2(rect.position.x + b, bottom),
+		Vector2(rect.position.x, bottom - b),
+		Vector2(rect.position.x, rect.position.y + b),
+	])
+
+func _draw_closed_polyline(points: PackedVector2Array, color: Color) -> void:
+	var closed := points.duplicate()
+	closed.append(points[0])
+	draw_polyline(closed, color, 2.0, true)
 
 func _fog_level(p: Vector2i) -> int:
 	# 0 unseen, 2 revealed (revealed ground stays lit permanently).
@@ -453,6 +481,34 @@ func _draw_building(p: Vector2i, b: Dictionary) -> void:
 			draw_rect(Rect2(origin + Vector2(9, 22), Vector2(2, 8)), Color(0.3, 0.2, 0.1))
 			draw_circle(origin + Vector2(w - 10, 16), 7.0, Color(0.22, 0.42, 0.2))
 			draw_rect(Rect2(origin + Vector2(w - 11, 22), Vector2(2, 8)), Color(0.3, 0.2, 0.1))
+		"graveyard":
+			# Dark consecrated ground, an iron rail and a row of leaning stones.
+			draw_rect(Rect2(origin + Vector2(5, 8), Vector2(w - 10, h - 12)),
+				Color(0.24, 0.27, 0.22))
+			for n in 3:
+				draw_line(origin + Vector2(8 + n * 18, 6),
+					origin + Vector2(8 + n * 18, h - 4),
+					Color(0.22, 0.2, 0.18), 1.4)
+			draw_line(origin + Vector2(5, 7), origin + Vector2(w - 5, 7),
+				Color(0.22, 0.2, 0.18), 1.4)
+			for n in 4:
+				var stone := origin + Vector2(16 + (n % 2) * 25, 24 + int(n / 2.0) * 22)
+				draw_rect(Rect2(stone, Vector2(8, 15)), Color(0.62, 0.61, 0.55))
+				draw_circle(stone + Vector2(4, 0), 4.0, Color(0.62, 0.61, 0.55))
+				draw_line(stone + Vector2(4, 5), stone + Vector2(4, 11),
+					Color(0.42, 0.42, 0.38), 1.2)
+		"sewers":
+			# A stone culvert and iron grate with a thin green trickle.
+			draw_rect(Rect2(origin + Vector2(5, 9), Vector2(w - 10, h - 15)),
+				BUILDING_COLORS[kind])
+			draw_rect(Rect2(origin + Vector2(9, 13), Vector2(w - 18, h - 22)),
+				Color(0.12, 0.15, 0.13))
+			for n in 3:
+				draw_line(origin + Vector2(11 + n * 8, 13),
+					origin + Vector2(11 + n * 8, h - 9),
+					Color(0.4, 0.44, 0.4), 1.5)
+			draw_line(origin + Vector2(9, h - 10),
+				origin + Vector2(w - 9, h - 10), Color(0.36, 0.55, 0.3), 2.0)
 
 func _draw_den(p: Vector2i, den: Dictionary) -> void:
 	var kind_key: String = den.get("kind", "goblin_den")
@@ -484,6 +540,19 @@ func _draw_bounty_flag(p: Vector2i) -> void:
 		return
 	var origin := Vector2(p.x * TILE, p.y * TILE)
 	var pole := origin + Vector2(TILE - 10, TILE - 10)
+	draw_line(pole, pole + Vector2(0, -18), Color(0.2, 0.15, 0.1), 2.0)
+	var pennant := PackedVector2Array([
+		pole + Vector2(0, -18), pole + Vector2(12, -15), pole + Vector2(0, -11),
+	])
+	draw_colored_polygon(pennant, GOLD)
+
+func _draw_explore_bounty_flag(p: Vector2i) -> void:
+	# This flag must read through fog: it marks ground the realm cannot see.
+	var origin := Vector2(p.x * TILE, p.y * TILE)
+	var center := origin + Vector2(TILE / 2.0, TILE / 2.0)
+	draw_circle(center, 11.0, Color(0.95, 0.8, 0.3, 0.16))
+	draw_arc(center, 11.0, 0.0, TAU, 24, Color(0.95, 0.8, 0.3, 0.8), 1.5, true)
+	var pole := center + Vector2(1, 9)
 	draw_line(pole, pole + Vector2(0, -18), Color(0.2, 0.15, 0.1), 2.0)
 	var pennant := PackedVector2Array([
 		pole + Vector2(0, -18), pole + Vector2(12, -15), pole + Vector2(0, -11),
@@ -661,7 +730,9 @@ func _draw_agents() -> void:
 		# Goblins and wild creatures only show when someone from the realm
 		# can actually see them; the realm's own folk are always drawn
 		# (heroes are the explorers lighting the way).
-		if (a.kind == "goblin" or a.kind == "creature" or a.kind == "bandit") \
+		if (a.kind == "goblin" or a.kind == "creature" or a.kind == "bandit" \
+				or a.kind == "rat" \
+				or (a.kind == "undead" and a.undead_side == "hostile")) \
 				and _fog_level(a.tile()) < 2:
 			continue
 		var c: Vector2 = a.pos * float(TILE)
@@ -694,6 +765,27 @@ func _draw_agents() -> void:
 			"guard":
 				draw_circle(c, 4.5, Color(0.45, 0.55, 0.7))
 				draw_line(c + Vector2(3, 2), c + Vector2(-3, -6), Color(0.85, 0.85, 0.9), 1.5)
+			"undead":
+				# Bone-pale servants have a faint loyal glint; hostile dead
+				# burn with a red eye and a darker shroud.
+				var ally: bool = a.undead_side == "ally"
+				draw_circle(c, 5.4, Color(0.12, 0.12, 0.11))
+				draw_circle(c, 4.4, Color(0.67, 0.72, 0.64) if ally \
+					else Color(0.42, 0.46, 0.4))
+				draw_circle(c + Vector2(-1.6, -1.0), 1.0,
+					Color(0.45, 0.7, 0.85) if ally else Color(0.9, 0.2, 0.1))
+				draw_circle(c + Vector2(1.6, -1.0), 1.0,
+					Color(0.45, 0.7, 0.85) if ally else Color(0.9, 0.2, 0.1))
+				draw_line(c + Vector2(-2, 2), c + Vector2(-4, 5),
+					Color(0.5, 0.5, 0.45), 1.2)
+				draw_line(c + Vector2(2, 2), c + Vector2(4, 5),
+					Color(0.5, 0.5, 0.45), 1.2)
+			"rat":
+				draw_circle(c, 3.6, Color(0.34, 0.32, 0.3))
+				draw_circle(c + Vector2(2.5, -1.2), 1.6, Color(0.42, 0.4, 0.37))
+				draw_line(c + Vector2(-3, 1), c + Vector2(-7, 3),
+					Color(0.45, 0.4, 0.37), 1.1)
+				draw_circle(c + Vector2(3.4, -1.7), 0.7, Color(0.9, 0.2, 0.1))
 			"creature":
 				var col: Color = CREATURE_COLORS.get(a.species, Color(0.7, 0.6, 0.5))
 				draw_circle(c, 3.5, col)

@@ -144,6 +144,20 @@ custom_minimum_size = Vector2(108, 52)
 theme_override_font_sizes/font_size = 20
 text = "Grove 35g"
 
+[node name="GraveyardButton" type="Button" parent="UI/Root/BuildBar"]
+unique_name_in_owner = true
+toggle_mode = true
+custom_minimum_size = Vector2(108, 52)
+theme_override_font_sizes/font_size = 20
+text = "Grave 50g"
+
+[node name="SewersButton" type="Button" parent="UI/Root/BuildBar"]
+unique_name_in_owner = true
+toggle_mode = true
+custom_minimum_size = Vector2(108, 52)
+theme_override_font_sizes/font_size = 20
+text = "Sewers 40g"
+
 [node name="DevButton" type="Button" parent="UI/Root"]
 unique_name_in_owner = true
 anchor_left = 1.0

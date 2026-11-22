@@ -12,6 +12,7 @@ func _initialize() -> void:
 	_test_activity_integration()
 	_test_gear_goal_and_purchase()
 	_test_gear_refusals()
+	_test_combat_tuning()
 	_test_gear_combat_bonus()
 	print("RESULT: %s" % ["PASS" if not failed else "FAIL"])
 	quit(1 if failed else 0)
@@ -232,17 +233,53 @@ func _spawn_foe(sim, at: Vector2i):
 	sim.agents.append(g)
 	return g
 
+func _test_combat_tuning() -> void:
+	var sim = _make_sim(855)
+	var h = _hero(sim, "warrior", sim.keep_pos)
+	if sim.hero_accuracy(h) != sim.HERO_BASE_ACCURACY:
+		_fail("level-1 accuracy is %.2f, expected %.2f" \
+			% [sim.hero_accuracy(h), sim.HERO_BASE_ACCURACY])
+	h.level = 2
+	if not is_equal_approx(sim.hero_accuracy(h), 0.45):
+		_fail("level-2 accuracy wrong: %.2f" % sim.hero_accuracy(h))
+	h.level = 10
+	if not is_equal_approx(sim.hero_accuracy(h), 0.85):
+		_fail("level-10 accuracy wrong: %.2f" % sim.hero_accuracy(h))
+	h.level = 20
+	if not is_equal_approx(sim.hero_accuracy(h), sim.HERO_ACCURACY_MAX):
+		_fail("accuracy did not cap: %.2f" % sim.hero_accuracy(h))
+	h.level = 1
+	h.gear = 2
+	if sim.hero_melee_damage(h) != 6:
+		_fail("level-1 geared damage wrong: %d" % sim.hero_melee_damage(h))
+	h.level = 4
+	if sim.hero_melee_damage(h) != 7:
+		_fail("level-4 damage wrong: %d" % sim.hero_melee_damage(h))
+	h.level = 7
+	if sim.hero_melee_damage(h) != 8:
+		_fail("level-7 damage wrong: %d" % sim.hero_melee_damage(h))
+	if int(sim.HERO_CLASSES["warrior"].hp) != 11 \
+			or int(sim.HERO_CLASSES["wizard"].hp) != 8:
+		_fail("base hero HP was not cut by 20%")
+
 func _test_gear_combat_bonus() -> void:
 	var sim = _make_sim(857)
 	var h = _hero(sim, "warrior", sim.keep_pos)
 	h.gear = 2
 	h.level = 1
+	h.hp = 999
+	h.max_hp = 999
 	var at: Vector2i = sim.keep_pos + Vector2i(1, 0)
 	var g = _spawn_foe(sim, at)
-	g.hp = 10
-	g.max_hp = 10
-	sim._combat_step()
-	var expected: int = h.level + 1 + h.gear
-	if g.hp != 10 - expected:
-		_fail("gear did not add to melee: goblin hp %d, expected %d" \
-			% [g.hp, 10 - expected])
+	var expected: int = sim.hero_melee_damage(h)
+	var dealt := 0
+	for i in 100:
+		g.hp = 10
+		g.max_hp = 10
+		sim._combat_step()
+		if g.hp < 10:
+			dealt = 10 - g.hp
+			break
+	if dealt != expected:
+		_fail("gear hit dealt %d, expected %d (accuracy %.2f)" \
+			% [dealt, expected, sim.hero_accuracy(h)])

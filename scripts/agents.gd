@@ -100,6 +100,9 @@ var species := ""
 # Leisure cooldown (M6.1): ticks during which hunt/carouse are off the
 # books after a round of them, so idle hours rotate instead of repeating.
 var leisure_left := 0
+# M7.3: undead allegiance and the loyalty clock of a raised servant.
+var undead_side := "" # "ally" or "hostile"
+var decay_left := 0
 
 func setup(k, kind_value: String, spawn: Vector2i) -> void:
 	kingdom = k
@@ -336,9 +339,19 @@ func _finish_work() -> void:
 				pouch += kingdom.take_tax(target)
 			_advance_round()
 		RAID:
-			kingdom.raid_strike(target, self)
-			state = RETURNING
-			path = kingdom.find_path(tile(), kingdom.den_doorstep(home, tile()))
+			if kind == "undead" or kind == "rat":
+				if kind == "undead":
+					kingdom.undead_raid(self)
+				else:
+					kingdom.rat_raid(self)
+				state = RETURNING
+				purpose = ""
+				path = kingdom.find_path(tile(), home)
+			else:
+				kingdom.raid_strike(target, self)
+				state = RETURNING
+				path = kingdom.find_path(tile(),
+					kingdom.den_doorstep(home, tile()))
 		FORAGE:
 			# Goblins haul grubs by the armful; wild creatures graze light.
 			carrying = kingdom.FORAGE_CARRY if kind != "creature" \
@@ -397,7 +410,10 @@ func _finish_work() -> void:
 		ASSAULT:
 			# Hero work: the kingdom decides whether the quest continues
 			# (keeps ACTING) or the den fell (sets IDLE).
-			kingdom.hero_assault_tick(self)
+			if kind == "undead":
+				kingdom.undead_assault_tick(self)
+			else:
+				kingdom.hero_assault_tick(self)
 		INTERCEPT, PATROL:
 			state = IDLE
 			purpose = ""

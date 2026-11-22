@@ -76,11 +76,17 @@ func _draw() -> void:
 			draw_rect(Rect2(Vector2(p) * PX, Vector2(PX, PX)),
 				Color(0.7, 0.15, 0.12) if hostile else Color(0.5, 0.4, 0.24))
 	for a in sim.agents:
-		if a.kind == "goblin" or a.kind == "creature" or a.kind == "bandit":
+		if a.kind == "goblin" or a.kind == "creature" or a.kind == "bandit" \
+				or a.kind == "rat" \
+				or (a.kind == "undead" and a.undead_side == "hostile"):
 			continue
 		if a.kind == "peasant":
 			continue # too many dots; the realm folk live where you can see
-		var col := Color(0.95, 0.95, 0.95) if a.kind == "hero" else Color(0.45, 0.55, 0.7)
+		var col := Color(0.45, 0.55, 0.7)
+		if a.kind == "hero":
+			col = Color(0.95, 0.95, 0.95)
+		elif a.kind == "undead":
+			col = Color(0.62, 0.76, 0.7)
 		draw_rect(Rect2(Vector2(a.tile()) * PX, Vector2(PX, PX)), col)
 	# Viewport outline, in tile space.
 	if map_view != null:

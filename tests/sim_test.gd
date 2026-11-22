@@ -176,7 +176,8 @@ func _initialize() -> void:
 					failed = true
 					print("FAIL: wrong padding reason: %s" % pad.build_block_reason(q))
 
-	# The grove may root in forest or marsh; other halls require grass.
+	# The grove and ranger hut may root in forest or marsh; other halls
+	# require grass.
 	var w5 = load("res://scripts/world.gd").new()
 	w5.generate(42)
 	w5.tiles.fill(w5.GRASS) # deterministic empty canvas for footprint geometry
@@ -233,6 +234,19 @@ func _initialize() -> void:
 			if layout.can_build_at(tavern + Vector2i(0, 1), "house"):
 				failed = true
 				print("FAIL: built directly below the tavern footprint")
+	# The ranger hut shares the grove's wild-ground allowance.
+	var ranger := Vector2i(15, 12)
+	w5.set_terrain(ranger, w5.FOREST)
+	w5.set_terrain(ranger + Vector2i(1, 0), w5.SWAMP)
+	if layout.can_build_at(ranger, "house"):
+		failed = true
+		print("FAIL: house allowed on the ranger hut's wild ground")
+	if not layout.can_build_at(ranger, "ranger_hut"):
+		failed = true
+		print("FAIL: ranger hut refused on forest/marsh")
+	elif not layout.build_at("ranger_hut", ranger):
+		failed = true
+		print("FAIL: ranger hut build failed on wild ground")
 
 	# Event log scrollback: every announcement is recorded with a monotonic
 	# id and timestamp, and the ring is capped.

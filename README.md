@@ -3,6 +3,7 @@
 A real-time, indirect-control fantasy kingdom sim (Godot 4), prototyped
 headless on a Raspberry Pi 5 and playable on any device via the web build.
 
+- `MANUAL.md` — player manual, also readable in-game from the book button
 - `design-concept.md` — project brief and constraints
 - `content-design.md` — bestiary, heroes, buildings, ecology (data-ready tables)
 
@@ -57,7 +58,7 @@ godot --headless --script tests/inspect_test.gd
 # Run the raid tests (dens, warbands, guards, den clearing)
 godot --headless --script tests/raids_test.gd
 
-# Run the hero tests (attraction, incentive scoring, bounty flow, loot)
+# Run the hero tests (attraction, incentive scoring, bounties, explore flags, loot)
 godot --headless --script tests/heroes_test.gd
 
 # Run the fog-of-war tests (reveal, landmarks, gating, perf budget)
@@ -77,6 +78,12 @@ godot --headless --script tests/halls_test.gd
 
 # Run the progression tests (activity XP, core pursuits, gear shopping)
 godot --headless --script tests/hero_progression_test.gd
+
+# Run the M7.3 tests (graveyard/undead, sewers/rats/plague, tribute)
+godot --headless --script tests/m7_rest_test.gd
+
+# Run the manual tests (file present, major sections, BBCode renderer)
+godot --headless --script tests/manual_test.gd
 
 # First editor scan (builds .godot/ cache, registers class_name)
 godot --headless --editor --quit
@@ -132,24 +139,29 @@ unattended, enable linger: `sudo loginctl enable-linger $USER`.
 
 ```
 project.godot          Godot project config (gl_compatibility renderer)
+MANUAL.md              Player manual (also loaded by the in-game book button)
 scenes/main.tscn       Main scene (UI + game view)
 scripts/kingdom.gd     Pure simulation logic (no UI dependencies)
 scripts/agents.gd      Pure sim agents: peasants, tax collector, goblin raiders, guards, heroes, wild creatures
 scripts/descriptions.gd  Inspector flavor text (blurbs, vague statuses)
 scripts/minimap.gd       Miniature map (charted ground, viewport outline, tap-to-jump)
+scripts/manual.gd        Markdown loader and lightweight BBCode renderer
+scripts/manual_button.gd Hand-drawn book button for the manual
 scripts/main.gd        View layer: wires UI to the sim
 scripts/*.gd.uid       Godot stable resource IDs (tracked in git)
 tests/sim_test.gd      Headless sim test
 tests/agents_test.gd   Headless agent tests (construction, tax, delivery, deadlock)
 tests/inspect_test.gd  Headless inspector content tests
 tests/raids_test.gd    Headless raid tests (dens, cooldowns, razes, guards, clearing)
-tests/heroes_test.gd   Headless hero tests (attraction, scoring, bounties, loot)
+tests/heroes_test.gd   Headless hero tests (attraction, scoring, bounties, explore flags, loot)
 tests/fog_test.gd      Headless fog tests (reveal, landmarks, gating, perf)
 tests/ecology_test.gd  Headless ecology tests (wild dens, food chains, migration)
 tests/factions_test.gd  Headless faction tests (tension, feud, bandits, curses)
 tests/terrain_test.gd   Headless terrain-action tests (marsh chain, druid)
 tests/halls_test.gd    Headless hall tests (new buildings, production, classes)
-tests/hero_progression_test.gd  Headless progression tests (activity XP, gear shopping)
+tests/hero_progression_test.gd  Headless progression tests (activity XP, combat tuning, gear shopping)
+tests/m7_rest_test.gd  Headless graveyard/necromancer, sewer/plague, tribute tests
+tests/manual_test.gd   Headless manual presence/section/render tests
 server/serve_https.py  LAN HTTPS server for the web build
 builds/web/            Exported web build (regenerable, not committed)
 export_presets.cfg     Web export preset (thread support off)

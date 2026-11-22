@@ -11,6 +11,7 @@ func _initialize() -> void:
 	_test_wild_den_text()
 	_test_creature_titles()
 	_test_purse_tiers()
+	_test_explore_bounty_text()
 	_test_site_status()
 	_test_farm_status()
 	_test_agent_lines()
@@ -122,6 +123,18 @@ func _test_purse_tiers() -> void:
 	if D.building_status("house", p, {"kind": "house", "complete": true, "tax": 0}, sim) \
 			.findn("empty") == -1:
 		_fail("empty purse should read as empty")
+
+func _test_explore_bounty_text() -> void:
+	var D = load("res://scripts/descriptions.gd")
+	if D.explore_bounty_title() == "" or D.explore_bounty_blurb() == "":
+		_fail("explore bounty card text missing")
+	var sim = _make_sim(61)
+	var unposted: String = D.explore_bounty_status(0, sim)
+	if not unposted.contains(str(sim.BOUNTY_FEE)):
+		_fail("unposted explore status omits the fee: %s" % unposted)
+	var posted: String = D.explore_bounty_status(18, sim)
+	if not posted.contains("18"):
+		_fail("posted explore status omits the reward: %s" % posted)
 
 func _test_site_status() -> void:
 	var D = load("res://scripts/descriptions.gd")
