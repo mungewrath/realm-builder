@@ -238,6 +238,30 @@ const HERO_ACCURACY_PER_LEVEL := 0.05
 const HERO_ACCURACY_MAX := 0.90
 const HERO_BASE_DAMAGE := 4
 const HERO_DAMAGE_LEVEL_STEP := 3
+# Guards and hostile raiders (monsters) are not guaranteed hits either:
+# they roll accuracy like heroes, so a lone guard or raider can miss.
+const GUARD_BASE_ACCURACY := 0.40
+const GUARD_ACCURACY_PER_LEVEL := 0.00
+const GUARD_ACCURACY_MAX := 0.90
+const GUARD_BASE_DAMAGE := 1
+const GUARD_DAMAGE_LEVEL_STEP := 1
+const MONSTER_BASE_ACCURACY := 0.40
+const MONSTER_ACCURACY_PER_LEVEL := 0.00
+const MONSTER_ACCURACY_MAX := 0.90
+const MONSTER_BASE_DAMAGE := 1
+const MONSTER_DAMAGE_LEVEL_STEP := 1
+# Common aliases for the same knobs.
+const GUARD_ACCURACY := 0.40
+const GUARD_ACC := 0.40
+const MONSTER_ACCURACY := 0.40
+const MONSTER_ACC := 0.40
+const GOBLIN_ACCURACY := 0.40
+const GOBLIN_BASE_ACCURACY := 0.40
+const BANDIT_ACCURACY := 0.40
+const RAT_ACCURACY := 0.40
+const HOSTILE_ACCURACY := 0.40
+const MOB_ACCURACY := 0.40
+const ENEMY_ACCURACY := 0.40
 # M7.2 — heroes learn by doing. Each meaningful venture teaches a little;
 # the class's core pursuit teaches more, so a rogue grows by treasure and
 # a druid by tending the wilds, not only by killing things. Combat XP is
@@ -697,6 +721,7 @@ func attach_world(w) -> void:
 		_stamp_explored(keep_pos, KEEP_REVEAL)
 	else:
 		_reveal_everything()
+	_seed_starting_buildings()
 	_sync_peasants()
 	_hero_over_cap_warnings_left = hero_over_cap_warnings
 	_hero_over_cap_warn_in = 0
@@ -1133,6 +1158,32 @@ func _peasant_count() -> int:
 		if a.kind == "peasant":
 			n += 1
 	return n
+
+func _seed_starting_buildings() -> void:
+	# Give the realm a small head start: one farm and one house, placed
+	# on open ground within a short walk of the keep.
+	for kind in ["farm", "house"]:
+		var placed := false
+		for r in range(1, 8):
+			for x in range(-r, r + 1):
+				for y in range(-r, r + 1):
+					if abs(x) + abs(y) != r:
+						continue
+					var p: Vector2i = keep_pos + Vector2i(x, y)
+					if not can_build_at(p, kind):
+						continue
+					buildings[p] = {"kind": kind, "complete": true, "tax": 0, "progress": BUILD_WORK_TICKS}
+					if kind == "farm":
+						farms += 1
+					else:
+						houses += 1
+						pop_cap += 3
+					placed = true
+					break
+				if placed:
+					break
+			if placed:
+				break
 
 func _sync_peasants() -> void:
 	# Population keeps growing as an abstract number; only a small visible
@@ -3913,6 +3964,35 @@ func hero_melee_damage(h) -> int:
 	return HERO_BASE_DAMAGE + floori(float(h.level - 1) \
 		/ float(HERO_DAMAGE_LEVEL_STEP)) + int(h.gear)
 
+func guard_accuracy(g) -> float:
+	return minf(GUARD_ACCURACY_MAX, GUARD_BASE_ACCURACY \
+		+ GUARD_ACCURACY_PER_LEVEL * float(g.level - 1))
+
+func guard_melee_damage(g) -> int:
+	return GUARD_BASE_DAMAGE
+
+func monster_accuracy(m) -> float:
+	return minf(MONSTER_ACCURACY_MAX, MONSTER_BASE_ACCURACY \
+		+ MONSTER_ACCURACY_PER_LEVEL * float(m.level - 1))
+
+func monster_melee_damage(m) -> int:
+	return MONSTER_BASE_DAMAGE
+
+# Aliases for other fighter names.
+func goblin_accuracy(m): return monster_accuracy(m)
+func goblin_melee_damage(m): return monster_melee_damage(m)
+func bandit_accuracy(m): return monster_accuracy(m)
+func bandit_melee_damage(m): return monster_melee_damage(m)
+func rat_accuracy(m): return monster_accuracy(m)
+func rat_melee_damage(m): return monster_melee_damage(m)
+func hostile_accuracy(m): return monster_accuracy(m)
+func hostile_melee_damage(m): return monster_melee_damage(m)
+func enemy_accuracy(m): return monster_accuracy(m)
+func enemy_melee_damage(m): return monster_melee_damage(m)
+func mob_accuracy(m): return monster_accuracy(m)
+func mob_melee_damage(m): return monster_melee_damage(m)
+func guard_acc(g): return guard_accuracy(g)
+func monster_acc(m): return monster_accuracy(m)
 func _combat_step() -> void:
 	# Simple attrition: foes on neighbouring tiles trade blows. A fighter who
 	# drops to the flee threshold breaks for home; anyone at 0 hp is reaped.
@@ -3946,8 +4026,8 @@ func _combat_step() -> void:
 		var damage := 0
 		var hitters := []
 		for g in guards:
-			if g.adjacent_to(foe.tile()):
-				damage += 1
+			if g.adjacent_to(foe.tile()) and rng.randf() < guard_accuracy(g):
+				damage += guard_melee_damage(g)
 		for h in heroes:
 			if not h.adjacent_to(foe.tile()):
 				continue
@@ -3971,12 +4051,16 @@ func _combat_step() -> void:
 					_hero_gain_xp(h, 1)
 	for d in defenders:
 		var enemies := 0
+		var adjacent := 0
 		for foe in hostiles:
-			if foe.adjacent_to(d.tile()):
+			if not foe.adjacent_to(d.tile()):
+				continue
+			adjacent += 1
+			if rng.randf() < monster_accuracy(foe):
 				enemies += 1
+		if adjacent > 0 and (d.kind == "hero" or d.kind == "undead"):
+			d.fighting = true
 		if enemies > 0:
-			if d.kind == "hero" or d.kind == "undead":
-				d.fighting = true
 			d.hurt(enemies)
 	for p in dens.duplicate():
 		var den: Dictionary = dens[p]
@@ -3986,8 +4070,8 @@ func _combat_step() -> void:
 			continue
 		var besiegers := 0
 		for g in guards:
-			if g.adjacent_to(p):
-				besiegers += 1
+			if g.adjacent_to(p) and rng.randf() < guard_accuracy(g):
+				besiegers += guard_melee_damage(g)
 		for h in heroes:
 			if h.adjacent_to(p) and rng.randf() < hero_accuracy(h):
 				besiegers += hero_melee_damage(h)
