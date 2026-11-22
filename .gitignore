@@ -10,3 +10,6 @@ builds/
 
 # Server TLS certs
 server/certs/
+
+# python
+**/__pycache__

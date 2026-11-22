@@ -666,6 +666,9 @@ var open_tiles_explored := 0
 var uncharted_open := {} # open tiles no one has charted yet
 var tiles_explored := 0
 var landmarks_spotted := 0
+# Bumped whenever the explored layer changes, so the view can refresh its fog
+# texture in O(1) instead of rescanning every tile each frame.
+var fog_version := 0
 
 # Provisions capacity of the realm: complete farms feed people.
 func fed_capacity() -> int:
@@ -708,6 +711,7 @@ func set_fog_enabled(on: bool) -> void:
 	if fog_enabled == on:
 		return
 	fog_enabled = on
+	fog_version += 1
 	for a in agents:
 		a.fog_tile = Vector2i(-1, -1)
 	if on:
@@ -728,6 +732,7 @@ func _reveal_everything() -> void:
 	tiles_explored = explored.size()
 	open_tiles_explored = open_tile_total
 	uncharted_open.clear()
+	fog_version += 1
 
 func _reveal_radius(a) -> float:
 	return HERO_REVEAL if a.kind == "hero" else WORKER_REVEAL
@@ -746,6 +751,7 @@ func _stamp_explored(p: Vector2i, radius: float) -> void:
 			if explored[i] == 1:
 				continue
 			explored[i] = 1
+			fog_version += 1
 			tiles_explored += 1
 			if open_tiles[i] == 1:
 				open_tiles_explored += 1

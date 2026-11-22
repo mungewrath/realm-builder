@@ -48,10 +48,31 @@ const HERO_COLORS := {
 const GOLD := Color(0.92, 0.78, 0.2)
 const FOG_DARK := Color(0.03, 0.04, 0.07)
 
+# Terrain is baked in 16x16-tile chunks. Only chunks near the camera are kept,
+# so texture memory tracks the view rather than the whole map — that is what
+# lets a 5x map fit. Big worlds bake at 1x to keep the visible set small.
+const CHUNK_TILES := 16
+const CHUNK_CREATE_MARGIN := 1
+const CHUNK_KEEP_MARGIN := 2
+
+class TerrainPainter extends Node2D:
+	var view
+	var rect := Rect2i()
+	func _draw() -> void:
+		if view != null:
+			view._paint_terrain(self, rect)
+
 var world
 var sim
 var buildings := {}
 var selected := Vector2i(-1, -1)
+
+var _chunks := {}
+var _bake_scale := 2.0
+var _terrain_version := -1
+var _fog_version := -1
+var _fog_enabled := false
+var _fog_texture: ImageTexture
 
 # Placement preview: a translucent ghost of the selected building plus its
 # one-tile padding ring. Green means the tile can be confirmed; red means
@@ -68,13 +89,154 @@ var _touches := {}
 var _tap_index := -1
 var _tap_pos := Vector2.ZERO
 var _tap_valid := false
-var _pinch_dist := 0.0
+var _pinch_start_dist := 0.0
+var _pinch_start_scale := 1.0
+var _pinch_anchor := Vector2.ZERO
+var _pinch_world := Vector2.ZERO
 
 func setup(w, sim_ref) -> void:
 	world = w
 	sim = sim_ref
 	buildings = sim.buildings
+	_bake_scale = 2.0 if world.SIZE_X <= 96 else 1.0
+	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	set_process(true)
 	queue_redraw()
+
+func _process(_delta: float) -> void:
+	if world == null:
+		return
+	if world.version != _terrain_version:
+		_terrain_version = world.version
+		_dirty_all_chunks()
+	_sync_chunks()
+	if sim != null:
+		var fv: int = sim.fog_version if sim.fog_enabled else -1
+		if fv != _fog_version or sim.fog_enabled != _fog_enabled:
+			_fog_version = fv
+			_fog_enabled = sim.fog_enabled
+			_rebuild_fog()
+			queue_redraw()
+	_update_chunk_bakes()
+
+func _chunk_cols() -> int:
+	return (world.SIZE_X + CHUNK_TILES - 1) / CHUNK_TILES
+
+func _chunk_rows() -> int:
+	return (world.SIZE_Y + CHUNK_TILES - 1) / CHUNK_TILES
+
+func _sync_chunks() -> void:
+	# Keep a small ring of baked chunks around the camera. Chunks are baked on
+	# demand and dropped once far outside the view, so the working set stays
+	# bounded no matter how large the map grows.
+	var view := get_viewport_rect().size
+	var a := to_local(Vector2.ZERO)
+	var b := to_local(view)
+	var min_px := Vector2(minf(a.x, b.x), minf(a.y, b.y))
+	var max_px := Vector2(maxf(a.x, b.x), maxf(a.y, b.y))
+	var chunk_px := float(TILE * CHUNK_TILES)
+	var cols := _chunk_cols()
+	var rows := _chunk_rows()
+	var cmin := Vector2i(floori(min_px.x / chunk_px), floori(min_px.y / chunk_px))
+	var cmax := Vector2i(floori(max_px.x / chunk_px), floori(max_px.y / chunk_px))
+	var create_min := Vector2i(
+		clampi(cmin.x - CHUNK_CREATE_MARGIN, 0, cols - 1),
+		clampi(cmin.y - CHUNK_CREATE_MARGIN, 0, rows - 1))
+	var create_max := Vector2i(
+		clampi(cmax.x + CHUNK_CREATE_MARGIN, 0, cols - 1),
+		clampi(cmax.y + CHUNK_CREATE_MARGIN, 0, rows - 1))
+	for cy in range(create_min.y, create_max.y + 1):
+		for cx in range(create_min.x, create_max.x + 1):
+			var key := Vector2i(cx, cy)
+			if not _chunks.has(key):
+				_create_chunk(key)
+	var drop := []
+	for key in _chunks:
+		if key.x < cmin.x - CHUNK_KEEP_MARGIN \
+				or key.x > cmax.x + CHUNK_KEEP_MARGIN \
+				or key.y < cmin.y - CHUNK_KEEP_MARGIN \
+				or key.y > cmax.y + CHUNK_KEEP_MARGIN:
+			drop.append(key)
+	for key in drop:
+		_free_chunk(key)
+
+func _create_chunk(key: Vector2i) -> void:
+	var chunk_px := CHUNK_TILES * TILE
+	var vp := SubViewport.new()
+	vp.size = Vector2i(int(chunk_px * _bake_scale),
+		int(chunk_px * _bake_scale))
+	vp.transparent_bg = true
+	vp.disable_3d = true
+	vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	add_child(vp)
+	var painter := TerrainPainter.new()
+	painter.view = self
+	# One tile of overscan so decorations that overhang a tile (mountain
+	# peaks) still bleed across the chunk seam instead of being clipped.
+	painter.rect = Rect2i(key.x * CHUNK_TILES - 1, key.y * CHUNK_TILES - 1,
+		CHUNK_TILES + 2, CHUNK_TILES + 2)
+	painter.scale = Vector2(_bake_scale, _bake_scale)
+	painter.position = -Vector2(key.x * chunk_px, key.y * chunk_px) * _bake_scale
+	vp.add_child(painter)
+	painter.queue_redraw()
+	var sprite := Sprite2D.new()
+	sprite.texture = vp.get_texture()
+	sprite.centered = false
+	sprite.position = Vector2(key.x * chunk_px, key.y * chunk_px)
+	sprite.scale = Vector2(1.0 / _bake_scale, 1.0 / _bake_scale)
+	sprite.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	sprite.show_behind_parent = true
+	add_child(sprite)
+	_chunks[key] = {"viewport": vp, "painter": painter, "sprite": sprite,
+		"frames": 2}
+
+func _free_chunk(key: Vector2i) -> void:
+	var ch = _chunks.get(key)
+	if ch == null:
+		return
+	ch.sprite.queue_free()
+	ch.viewport.queue_free()
+	_chunks.erase(key)
+
+func _dirty_all_chunks() -> void:
+	for key in _chunks:
+		var ch = _chunks[key]
+		ch.painter.queue_redraw()
+		ch.frames = 2
+
+func _update_chunk_bakes() -> void:
+	for key in _chunks:
+		var ch = _chunks[key]
+		if ch.frames > 0:
+			ch.viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+			ch.frames -= 1
+		elif ch.viewport.render_target_update_mode != SubViewport.UPDATE_DISABLED:
+			ch.viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
+
+func _rebuild_fog() -> void:
+	if world == null or sim == null:
+		_fog_texture = null
+		return
+	var w: int = world.SIZE_X
+	var h: int = world.SIZE_Y
+	var data := PackedByteArray()
+	data.resize(w * h * 4)
+	var r := int(roundf(FOG_DARK.r * 255.0))
+	var g := int(roundf(FOG_DARK.g * 255.0))
+	var b := int(roundf(FOG_DARK.b * 255.0))
+	var fog_on: bool = sim.fog_enabled
+	for y in h:
+		for x in w:
+			var a := 0
+			if fog_on and sim.explored[y * w + x] == 0:
+				a = int(roundf(_fog_alpha(Vector2i(x, y)) * 255.0))
+			var i: int = (y * w + x) * 4
+			data[i] = r
+			data[i + 1] = g
+			data[i + 2] = b
+			data[i + 3] = a
+	var img := Image.create_from_data(w, h, false, Image.FORMAT_RGBA8, data)
+	_fog_texture = ImageTexture.create_from_image(img)
 
 func set_placement(kind: String, p: Vector2i, valid: bool) -> void:
 	placement_kind = kind
@@ -126,24 +288,39 @@ func _handle_touch(event: InputEventScreenTouch) -> void:
 			_tap_valid = true
 		elif _touches.size() == 2:
 			_tap_valid = false
-			_pinch_dist = _pinch_distance()
+			_begin_pinch()
 	else:
 		_touches.erase(event.index)
-		_pinch_dist = 0.0 if _touches.size() < 2 else _pinch_dist
+		if _touches.size() >= 2:
+			_begin_pinch()
+		else:
+			_pinch_start_dist = 0.0
 		if _touches.is_empty() and _tap_valid and event.index == _tap_index:
 			_tap(_tap_pos)
 
+func _begin_pinch() -> void:
+	# Pin the world point under the pinch start. Scaling about this fixed
+	# screen point means a pinch can never translate the view, so no drift
+	# can build up from the fingers' midpoint wandering.
+	_pinch_anchor = _pinch_midpoint()
+	_pinch_start_dist = _pinch_distance()
+	_pinch_start_scale = scale.x
+	_pinch_world = to_local(_pinch_anchor)
+
 func _handle_drag(event: InputEventScreenDrag) -> void:
+	var old: Vector2 = _touches.get(event.index, event.position)
 	_touches[event.index] = event.position
 	if _touches.size() >= 2:
 		var d := _pinch_distance()
-		if _pinch_dist > 0.0 and d > 0.0:
-			var pts := _touches.values()
-			_zoom_at((pts[0] + pts[1]) / 2.0, d / _pinch_dist)
-		_pinch_dist = d
+		if _pinch_start_dist > 0.0 and d > 0.0:
+			var s: float = clampf(_pinch_start_scale * (d / _pinch_start_dist),
+				MIN_SCALE, MAX_SCALE)
+			scale = Vector2(s, s)
+			position = _pinch_anchor - _pinch_world * s
+			_clamp_position()
 	else:
 		_tap_valid = false
-		_pan(event.relative)
+		_pan(event.position - old)
 
 func _tap(screen_pos: Vector2) -> void:
 	var local := to_local(screen_pos)
@@ -153,13 +330,6 @@ func _tap(screen_pos: Vector2) -> void:
 
 func _pan(screen_delta: Vector2) -> void:
 	position += screen_delta
-	_clamp_position()
-
-func _zoom_at(screen_point: Vector2, factor: float) -> void:
-	var local := to_local(screen_point)
-	var s: float = clampf(scale.x * factor, MIN_SCALE, MAX_SCALE)
-	scale = Vector2(s, s)
-	position = screen_point - local * s
 	_clamp_position()
 
 func _clamp_position() -> void:
@@ -182,35 +352,47 @@ func _pinch_distance() -> float:
 		return 0.0
 	return pts[0].distance_to(pts[1])
 
+func _pinch_midpoint() -> Vector2:
+	var pts := _touches.values()
+	if pts.size() < 2:
+		return Vector2.ZERO
+	return (pts[0] + pts[1]) / 2.0
+
 func _hash(x: int, y: int, n: int) -> float:
 	return fposmod(float((x * 73856093) ^ (y * 19349663) ^ (n * 83492791)) / 1000.0, 1.0)
+
+func _paint_terrain(c: CanvasItem, rect: Rect2i) -> void:
+	# Baked per visible chunk; only the decorations that change (works,
+	# buildings, dens, agents) are redrawn by the main view each frame.
+	var x0 := maxi(rect.position.x, 0)
+	var y0 := maxi(rect.position.y, 0)
+	var x1 := mini(rect.end.x, world.SIZE_X)
+	var y1 := mini(rect.end.y, world.SIZE_Y)
+	for y in range(y0, y1):
+		for x in range(x0, x1):
+			var t: int = world.tiles[y * world.SIZE_X + x]
+			var origin := Vector2(x * TILE, y * TILE)
+			c.draw_rect(Rect2(origin, Vector2(TILE - 1, TILE - 1)), TERRAIN_COLORS[t])
+			match t:
+				0:
+					_draw_grass(c, origin, x, y)
+				1:
+					_draw_forest(c, origin, x, y)
+				2:
+					_draw_water(c, origin, x, y)
+				3:
+					_draw_mountain(c, origin, x, y)
+				4:
+					_draw_swamp(c, origin, x, y)
 
 func _draw() -> void:
 	if world == null:
 		return
-	for x in world.SIZE_X:
-		for y in world.SIZE_Y:
-			var p := Vector2i(x, y)
-			var t: int = world.tiles[y * world.SIZE_X + x]
-			var origin := Vector2(x * TILE, y * TILE)
-			draw_rect(Rect2(origin, Vector2(TILE - 1, TILE - 1)), TERRAIN_COLORS[t])
-			match t:
-				0:
-					_draw_grass(origin, x, y)
-				1:
-					_draw_forest(origin, x, y)
-				2:
-					_draw_water(origin, x, y)
-				3:
-					_draw_mountain(origin, x, y)
-				4:
-					_draw_swamp(origin, x, y)
-			# M5 fog: dark until charted; charted ground stays lit
-			# permanently. Edges lighten a step so the veil reads soft.
-			var lvl := _fog_level(p)
-			if lvl < 2:
-				draw_rect(Rect2(origin, Vector2(TILE, TILE)),
-					FOG_DARK, _fog_alpha(p))
+	# M5 fog: a per-tile texture (one pixel per tile) rebuilt only when the
+	# explored layer changes, so the veil costs a single quad per frame.
+	if _fog_texture != null:
+		draw_texture_rect(_fog_texture,
+			Rect2(Vector2.ZERO, Vector2(world.SIZE_X, world.SIZE_Y) * TILE), false)
 	if sim != null and sim.get("terrain_works") != null:
 		for p in sim.terrain_works:
 			if _fog_level(p) > 0:
@@ -298,11 +480,12 @@ func _fog_level(p: Vector2i) -> int:
 	return 2 if sim.explored[p.y * world.SIZE_X + p.x] == 1 else 0
 
 func _fog_alpha(p: Vector2i) -> float:
-	# Unseen tiles next to charted ground get a lighter veil: soft edge.
+	# Unseen ground is fully opaque; only tiles bordering charted land get a
+	# lighter veil, so the frontier reads soft without leaking terrain.
 	var best := 0
 	for d in world.DIRS_ALL:
 		best = maxi(best, _fog_level(p + d))
-	return 0.75 if best == 2 else 0.9
+	return 0.75 if best == 2 else 1.0
 
 func center_on(p: Vector2i) -> void:
 	# Minimap jumps land the tapped tile in the middle of the viewport.
@@ -310,46 +493,46 @@ func center_on(p: Vector2i) -> void:
 	position = view / 2.0 - (Vector2(p) + Vector2(0.5, 0.5)) * TILE * scale.x
 	_clamp_position()
 
-func _draw_grass(origin: Vector2, x: int, y: int) -> void:
+func _draw_grass(c: CanvasItem, origin: Vector2, x: int, y: int) -> void:
 	var dark := Color(0.28, 0.46, 0.2)
 	for n in 2:
 		var px := origin + Vector2(_hash(x, y, n) * (TILE - 8) + 4, _hash(x, y, n + 10) * (TILE - 8) + 4)
-		draw_rect(Rect2(px, Vector2(2, 4)), dark)
+		c.draw_rect(Rect2(px, Vector2(2, 4)), dark)
 
-func _draw_forest(origin: Vector2, x: int, y: int) -> void:
+func _draw_forest(c: CanvasItem, origin: Vector2, x: int, y: int) -> void:
 	for n in 3:
 		var px := origin + Vector2(_hash(x, y, n) * (TILE - 12) + 4, _hash(x, y, n + 5) * (TILE - 14) + 6)
-		draw_rect(Rect2(px + Vector2(2, 8), Vector2(2, 4)), Color(0.3, 0.2, 0.1))
+		c.draw_rect(Rect2(px + Vector2(2, 8), Vector2(2, 4)), Color(0.3, 0.2, 0.1))
 		var crown := PackedVector2Array([
 			px + Vector2(3, 0), px + Vector2(-1, 8), px + Vector2(7, 8),
 		])
-		draw_colored_polygon(crown, Color(0.3, 0.5, 0.22))
+		c.draw_colored_polygon(crown, Color(0.3, 0.5, 0.22))
 
-func _draw_swamp(origin: Vector2, x: int, y: int) -> void:
+func _draw_swamp(c: CanvasItem, origin: Vector2, x: int, y: int) -> void:
 	# Wet ground: dark pools and a few reed tufts.
 	for n in 2:
 		var px := origin + Vector2(_hash(x, y, n + 20) * (TILE - 12) + 4, _hash(x, y, n + 30) * (TILE - 12) + 6)
-		draw_circle(px, 4.0, Color(0.16, 0.26, 0.2))
+		c.draw_circle(px, 4.0, Color(0.16, 0.26, 0.2))
 	for n in 3:
 		var rx := origin + Vector2(_hash(x, y, n + 40) * (TILE - 8) + 4, _hash(x, y, n + 50) * (TILE - 14) + 12)
-		draw_line(rx, rx + Vector2(0, -7), Color(0.4, 0.52, 0.32), 1.4)
+		c.draw_line(rx, rx + Vector2(0, -7), Color(0.4, 0.52, 0.32), 1.4)
 
-func _draw_water(origin: Vector2, x: int, y: int) -> void:
+func _draw_water(c: CanvasItem, origin: Vector2, x: int, y: int) -> void:
 	var light := Color(0.3, 0.48, 0.7)
 	for n in 2:
 		var py := origin + Vector2(4 + _hash(x, y, n) * 8, 8 + n * 10)
-		draw_line(py, py + Vector2(10 + _hash(x, y, n + 3) * 8, 0), light, 2.0)
+		c.draw_line(py, py + Vector2(10 + _hash(x, y, n + 3) * 8, 0), light, 2.0)
 
-func _draw_mountain(origin: Vector2, x: int, y: int) -> void:
+func _draw_mountain(c: CanvasItem, origin: Vector2, x: int, y: int) -> void:
 	var base := Vector2(origin.x + TILE / 2.0, origin.y + TILE - 4)
 	var peak := PackedVector2Array([
 		base + Vector2(0, -22), base + Vector2(-11, 0), base + Vector2(11, 0),
 	])
-	draw_colored_polygon(peak, Color(0.36, 0.34, 0.33))
+	c.draw_colored_polygon(peak, Color(0.36, 0.34, 0.33))
 	var cap := PackedVector2Array([
 		base + Vector2(0, -22), base + Vector2(-4, -14), base + Vector2(4, -14),
 	])
-	draw_colored_polygon(cap, Color(0.85, 0.85, 0.85))
+	c.draw_colored_polygon(cap, Color(0.85, 0.85, 0.85))
 
 func _draw_building(p: Vector2i, b: Dictionary) -> void:
 	var kind: String = b.kind

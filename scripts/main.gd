@@ -76,6 +76,7 @@ func _ready() -> void:
 	world.generate(20261114)
 	sim.attach_world(world)
 	map_view.setup(world, sim)
+	map_view.center_on(sim.keep_pos)
 	map_view.tile_clicked.connect(_on_tile_clicked)
 	farm_button.pressed.connect(_on_farm_pressed)
 	house_button.pressed.connect(_on_house_pressed)

@@ -4,13 +4,19 @@ const WATER := 2
 const MOUNTAIN := 3
 const SWAMP := 4
 
-const SIZE_X := 48
-const SIZE_Y := 32
+# The map is a base 48x32 world scaled uniformly. MAP_SCALE 1 is the original
+# realm; 5 gives a 240x160 wilderness (25x the ground). Blob counts scale with
+# area so forest and marsh keep their shares instead of drowning in grass.
+const BASE_SIZE_X := 48
+const BASE_SIZE_Y := 32
+const MAP_SCALE := 5
+const SIZE_X := BASE_SIZE_X * MAP_SCALE
+const SIZE_Y := BASE_SIZE_Y * MAP_SCALE
 
 # Each type should end up near a third of the open land.
-const FOREST_BLOBS := 9
+const FOREST_BLOBS := 9 * MAP_SCALE * MAP_SCALE
 const FOREST_BLOB_SIZE := 48
-const SWAMP_BLOBS := 9
+const SWAMP_BLOBS := 9 * MAP_SCALE * MAP_SCALE
 const SWAMP_BLOB_SIZE := 48
 
 const DIRS_ALL := [
@@ -19,6 +25,7 @@ const DIRS_ALL := [
 ]
 
 var tiles := PackedByteArray()
+var version := 0
 var rng := RandomNumberGenerator.new()
 # Godot's native A* handles real travel routes in C++; the scripted BFS is
 # kept for depth-capped speculative searches (hero target probes).
@@ -51,6 +58,7 @@ func generate(seed_value: int) -> void:
 	for x in range(SIZE_X / 2 - 2, SIZE_X / 2 + 3):
 		for y in range(SIZE_Y / 2 - 2, SIZE_Y / 2 + 3):
 			set_terrain(Vector2i(x, y), GRASS)
+	version += 1
 
 func _seed_blobs(blobs: Array, terrain: int, count: int, size: int) -> void:
 	var centers: Array = []
@@ -108,8 +116,12 @@ func get_terrain(p: Vector2i) -> int:
 
 func set_terrain(p: Vector2i, t: int) -> void:
 	if in_bounds(p):
-		tiles[p.y * SIZE_X + p.x] = t
+		var i: int = p.y * SIZE_X + p.x
+		if tiles[i] == t:
+			return
+		tiles[i] = t
 		_astar_dirty = true
+		version += 1
 
 func in_bounds(p: Vector2i) -> bool:
 	return p.x >= 0 and p.y >= 0 and p.x < SIZE_X and p.y < SIZE_Y
