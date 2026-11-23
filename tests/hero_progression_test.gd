@@ -8,6 +8,7 @@ var failed := false
 
 func _initialize() -> void:
 	_test_activity_xp_table()
+	_test_level_curve()
 	_test_explore_xp()
 	_test_activity_integration()
 	_test_gear_goal_and_purchase()
@@ -47,18 +48,23 @@ func _hero(sim, cls: String, at := Vector2i(-9999, -9999)):
 	return h
 
 func _fresh_xp(h) -> void:
+	# Park the hero past the early thresholds so a single award can be
+	# observed without immediately leveling them up.
 	h.xp = 0
-	h.level = 1
+	h.level = 5
 	h.max_hp = int(h.kingdom.HERO_CLASSES[h.hero_class].hp)
 
 func _test_activity_xp_table() -> void:
 	var sim = _make_sim(801)
 	var cases := [
-		["rogue", "treasure", 2], # core
-		["druid", "protect", 2], # core
-		["dwarf", "assist", 2], # core
-		["wizard", "explore", 2], # core
-		["ranger", "hunt", 1], # core is explore
+		["rogue", "carouse", 4], # primary
+		["rogue", "treasure", 1], # off primary
+		["rogue", "explore", 1], # off primary
+		["druid", "protect", 4], # primary
+		["dwarf", "assist", 4], # primary
+		["wizard", "explore", 4], # primary
+		["ranger", "explore", 4], # primary
+		["ranger", "hunt", 1], # off primary
 		["barbarian", "carouse", 1], # core is bounty
 	]
 	for row in cases:
@@ -73,10 +79,29 @@ func _test_activity_xp_table() -> void:
 	if sim.hero_activity_xp(_hero(sim, "rogue"), "rest") != 0:
 		_fail("rest awarded activity xp")
 
+func _test_level_curve() -> void:
+	var sim = _make_sim(802)
+	var prev := 0
+	for lvl in range(1, 11):
+		var need: int = sim._hero_xp_to_next(lvl)
+		if need <= prev:
+			_fail("level curve not rising at level %d: %d <= %d" \
+				% [lvl, need, prev])
+		prev = need
+	if sim._hero_xp_to_next(1) != sim.HERO_XP_PER_LEVEL:
+		_fail("first level asks %d, expected %d" \
+			% [sim._hero_xp_to_next(1), sim.HERO_XP_PER_LEVEL])
+	# A pure linear curve would ask exactly PER_LEVEL * level; the exponential
+	# component must push later levels above that line.
+	if sim._hero_xp_to_next(10) <= sim.HERO_XP_PER_LEVEL * 10:
+		_fail("level curve has no exponential component: %d" \
+			% sim._hero_xp_to_next(10))
+
 func _test_explore_xp() -> void:
 	var sim = _make_sim(809, true)
 	sim.heroes_enabled = false
 	var h = _hero(sim, "wizard", sim.keep_pos)
+	_fresh_xp(h)
 	h.pos = Vector2(sim.keep_pos) + Vector2(0.5, 0.5)
 	var target: Vector2i = sim._explore_target(h.tile())
 	if target.x < 0:
@@ -93,56 +118,71 @@ func _test_explore_xp() -> void:
 		_fail("wizard never finished exploring")
 	if h.state != "idle":
 		_fail("wizard did not settle after exploring")
-	if h.xp - xp0 != 2:
-		_fail("exploring wizard gained %d xp, expected core 2" % (h.xp - xp0))
+	if h.xp - xp0 != 4:
+		_fail("exploring wizard gained %d xp, expected primary 4" % (h.xp - xp0))
 
 func _test_activity_integration() -> void:
 	var AgentC = load("res://scripts/agents.gd")
-	# Treasure: looting a pile teaches a rogue.
+	# Treasure: looting a pile is outside the rogue's primary pursuit now.
 	var sim = _make_sim(811)
 	var h = _hero(sim, "rogue", sim.keep_pos)
+	_fresh_xp(h)
 	sim.loot_piles[h.tile()] = 5
 	h.target = h.tile()
 	sim.hero_take_loot(h)
-	if h.xp != 2:
-		_fail("looting did not grant core xp: %d" % h.xp)
-	# Tending the wilds: the druid's core lesson.
+	if h.xp != 1:
+		_fail("looting did not grant partial xp: %d" % h.xp)
+	# Tending the wilds: the druid's primary lesson.
 	sim = _make_sim(821)
 	h = _hero(sim, "druid", sim.keep_pos + Vector2i(2, 2))
+	_fresh_xp(h)
 	var den: Vector2i = sim.keep_pos + Vector2i(3, 2)
 	sim._place_wild_den("rabbit_warren", den)
 	h.target = den
 	sim.hero_protect(h)
-	if h.xp != 2:
-		_fail("tending wilds did not grant core xp: %d" % h.xp)
-	# Hunting: a lesson, but not the ranger's core pursuit.
+	if h.xp != 4:
+		_fail("tending wilds did not grant primary xp: %d" % h.xp)
+	# Hunting: a lesson, but not the ranger's primary pursuit.
 	sim = _make_sim(823)
 	h = _hero(sim, "ranger", sim.keep_pos + Vector2i(2, 2))
+	_fresh_xp(h)
 	den = sim.keep_pos + Vector2i(3, 2)
 	sim._place_wild_den("rabbit_warren", den)
 	h.target = den
 	sim.hero_hunt(h)
 	if h.xp != 1:
-		_fail("hunting did not grant activity xp: %d" % h.xp)
-	# Gambling: a night at the tables is worth something too.
+		_fail("hunting did not grant partial activity xp: %d" % h.xp)
+	# Gambling: the rogue's primary lesson.
 	sim = _make_sim(827)
-	h = _hero(sim, "barbarian", sim.keep_pos + Vector2i(2, 2))
+	h = _hero(sim, "rogue", sim.keep_pos + Vector2i(2, 2))
+	_fresh_xp(h)
 	var tavern: Vector2i = sim.keep_pos + Vector2i(3, 2)
 	sim.buildings[tavern] = {"kind": "tavern", "complete": true, "tax": 0}
 	h.target = tavern
 	sim.hero_carouse(h)
+	if h.xp != 4:
+		_fail("rogue gambling did not grant primary xp: %d" % h.xp)
+	# Carousing outside the class's pursuit still teaches a little.
+	sim = _make_sim(828)
+	h = _hero(sim, "barbarian", sim.keep_pos + Vector2i(2, 2))
+	_fresh_xp(h)
+	tavern = sim.keep_pos + Vector2i(3, 2)
+	sim.buildings[tavern] = {"kind": "tavern", "complete": true, "tax": 0}
+	h.target = tavern
+	sim.hero_carouse(h)
 	if h.xp != 1:
-		_fail("carousing did not grant activity xp: %d" % h.xp)
-	# Honest work: the dwarf's core lesson.
+		_fail("barbarian carousing did not grant partial xp: %d" % h.xp)
+	# Honest work: the dwarf's primary lesson.
 	sim = _make_sim(829)
 	h = _hero(sim, "dwarf", sim.keep_pos + Vector2i(2, 2))
+	_fresh_xp(h)
 	var site: Vector2i = sim.keep_pos + Vector2i(3, 2)
 	sim.buildings[site] = {"kind": "farm", "complete": false, "tax": 0,
 		"progress": 0}
 	h.target = site
 	sim.hero_assist(h)
-	if h.xp != 2:
-		_fail("assisting at a worksite did not grant core xp: %d" % h.xp)
+	if h.xp != 4:
+		_fail("assisting at a worksite did not grant primary xp: %d" % h.xp)
 	# Shopping banks coin but is not a lesson.
 	sim = _make_sim(839)
 	h = _hero(sim, "rogue", sim.keep_pos)

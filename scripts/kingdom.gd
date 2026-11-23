@@ -130,7 +130,7 @@ const HERO_CLASSES := {
 		"title": "Rogue",
 		"attracted_by": ["tavern", "sewers"],
 		"hp": 8,
-		"weights": {"bounty": 4, "treasure": 9, "smite_evil": 1, "assist": 0,
+		"weights": {"bounty": 10, "treasure": 9, "smite_evil": 1, "assist": 0,
 			"hunt": 4, "pray": 0, "carouse": 3},
 	},
 	"warrior": {
@@ -231,6 +231,9 @@ const HERO_PRAY_TICKS := 6
 const HERO_HUNT_TICKS := 4
 const HERO_PROTECT_TICKS := 5
 const HERO_XP_PER_LEVEL := 4
+# Each level's price carries a small exponential kick on top of the linear
+# step, so early levels stay quick but veterans take longer to advance.
+const HERO_XP_GROWTH := 1.15
 # A fresh hero is not a guaranteed hit. Accuracy climbs with level; damage
 # rises much more slowly than it used to, so veteran power is not raw DPS.
 const HERO_BASE_ACCURACY := 0.40
@@ -262,16 +265,17 @@ const RAT_ACCURACY := 0.40
 const HOSTILE_ACCURACY := 0.40
 const MOB_ACCURACY := 0.40
 const ENEMY_ACCURACY := 0.40
-# M7.2 — heroes learn by doing. Each meaningful venture teaches a little;
-# the class's core pursuit teaches more, so a rogue grows by treasure and
-# a druid by tending the wilds, not only by killing things. Combat XP is
-# still paid separately on kills and den clears.
+# M7.2 — heroes learn by doing. A class's primary pursuit teaches the full
+# lesson; everything else is a dabble worth only a fraction, so a rogue
+# grows by gambling and a ranger by exploring, not by trying everything.
+# Combat XP is still paid separately on kills and den clears.
 const HERO_ACTIVITY_XP := {
-	"explore": 1, "protect": 1, "hunt": 1, "treasure": 1,
-	"assist": 1, "carouse": 1,
+	"explore": 4, "protect": 4, "hunt": 4, "treasure": 4,
+	"assist": 4, "carouse": 4,
 }
+const HERO_OFF_PRIMARY_XP := 0.25
 const HERO_CORE_ACTIVITY := {
-	"rogue": "treasure",
+	"rogue": "carouse",
 	"warrior": "bounty", # fighting is their core; combat XP already pays
 	"paladin": "smite",
 	"druid": "protect",
@@ -286,6 +290,12 @@ const GEAR_COST := 8
 const HERO_GEAR_MAX := 4
 const BOUNTY_FEE := 20
 const BOUNTY_OVERHEAD := 2 # the posting office's cut; the rest lands on the flag
+# A flag is judged by the trip and the fight, not the purse alone. Distance
+# and a lair's strength dilute the reward's pull; a shorter walk of unknown
+# ground is easier to sell than a long one.
+const BOUNTY_DISTANCE_SCALE := 64.0
+const BOUNTY_HP_SCALE := 48.0
+const EXPLORE_DISTANCE_SCALE := 32.0
 
 # M5 — exploration & fog of war. The map starts dark; the keep charts its
 # surroundings at the start, and heroes (keen eyes, long roam) and the
@@ -3307,28 +3317,51 @@ func _nearest_pile(from: Vector2i) -> Vector2i:
 			best = p
 	return best
 
+func _travel_distance(from: Vector2i, to: Vector2i) -> float:
+	return sqrt(Vector2(from).distance_squared_to(Vector2(to)))
+
+func _den_bounty_difficulty(p: Vector2i, from: Vector2i) -> float:
+	# Long roads and strong lairs make a purse costlier to claim.
+	var hp := float(dens.get(p, {}).get("hp", den_hp))
+	return 1.0 + _travel_distance(from, p) / BOUNTY_DISTANCE_SCALE \
+		+ hp / BOUNTY_HP_SCALE
+
+func _explore_bounty_difficulty(p: Vector2i, from: Vector2i) -> float:
+	return 1.0 + _travel_distance(from, p) / EXPLORE_DISTANCE_SCALE
+
+func _bounty_appeal(p: Vector2i, from: Vector2i) -> float:
+	if not bounties.has(p):
+		return 0.0
+	return float(bounties[p].reward) / _den_bounty_difficulty(p, from)
+
+func _explore_bounty_appeal(p: Vector2i, from: Vector2i) -> float:
+	if not explore_bounties.has(p):
+		return 0.0
+	return float(explore_bounties[p].reward) \
+		/ _explore_bounty_difficulty(p, from)
+
 func _best_explore_bounty(from: Vector2i) -> Vector2i:
 	var best := Vector2i(-1, -1)
-	var best_reward := -1
+	var best_appeal := -INF
 	var best_d := INF
 	for p in explore_bounties:
-		var reward: int = int(explore_bounties[p].reward)
+		var appeal := _explore_bounty_appeal(p, from)
 		var d := Vector2(p).distance_squared_to(Vector2(from))
-		if reward > best_reward or (reward == best_reward and d < best_d):
-			best_reward = reward
+		if appeal > best_appeal or (is_equal_approx(appeal, best_appeal) and d < best_d):
+			best_appeal = appeal
 			best_d = d
 			best = p
 	return best
 
 func _best_bounty(from: Vector2i) -> Vector2i:
 	var best := Vector2i(-1, -1)
-	var best_reward := -1
+	var best_appeal := -INF
 	var best_d := INF
 	for p in bounties:
-		var reward: int = int(bounties[p].reward)
+		var appeal := _bounty_appeal(p, from)
 		var d := Vector2(p).distance_squared_to(Vector2(from))
-		if reward > best_reward or (reward == best_reward and d < best_d):
-			best_reward = reward
+		if appeal > best_appeal or (is_equal_approx(appeal, best_appeal) and d < best_d):
+			best_appeal = appeal
 			best_d = d
 			best = p
 	return best
@@ -3369,19 +3402,21 @@ func hero_goal_scores(h) -> Dictionary:
 	if not bounties.is_empty() and int(w.bounty) > 0:
 		# Bounties fly only over dens the player could see, so they are
 		# charted by construction.
-		var best_reward := 0
-		for p in bounties:
-			best_reward = maxi(best_reward, int(bounties[p].reward))
-		# The flag's size does the pulling — a pittance tempts, a fortune
-		# drags even the reluctant out the door — while personality only
-		# tints how tempting flags are at all.
-		scores["bounty"] = int(w.bounty) + int(best_reward / 4.0) \
+		# A bounty's pull is its reward discounted by the trip and the
+		# fight it buys: a far lair or a tough den costs more to claim, so
+		# the same purse tempts less. Personality still decides whether the
+		# hero cares at all, and the reward term keeps a rich flag pulling
+		# harder than a poor one.
+		var best_bounty_den := _best_bounty(h.tile())
+		var bounty_appeal := _bounty_appeal(best_bounty_den, h.tile())
+		scores["bounty"] = int(w.bounty) \
+			+ int(bounty_appeal / 2.0) \
 			+ _mead_morale_bonus()
 	var explore_spot := _best_explore_bounty(h.tile())
 	if explore_spot.x >= 0:
-		var explore_reward := int(explore_bounties[explore_spot].reward)
-		scores["explore"] = 8 + int(w.get("explore", 0)) \
-			+ int(explore_reward / 4.0)
+		var explore_appeal := _explore_bounty_appeal(explore_spot, h.tile())
+		scores["explore"] = 4 + int(w.get("explore", 0)) \
+			+ int(explore_appeal / 4.0)
 	var known_dens := _dens_known_to_realm()
 	if int(w.smite_evil) > 0 and not known_dens.is_empty():
 		var top := 1
@@ -3782,9 +3817,14 @@ func _druid_depart(h) -> void:
 	heroes_departed += 1
 	last_event = "A druid turns away from the defiled realm"
 
+func _hero_xp_to_next(level: int) -> int:
+	# Linear step with a gentle exponential tail: level 1 is cheap, and each
+	# further level asks a little more than the last beyond the linear share.
+	return int(round(HERO_XP_PER_LEVEL * level * pow(HERO_XP_GROWTH, level - 1)))
+
 func _hero_level_check(h) -> void:
-	while h.xp >= HERO_XP_PER_LEVEL * h.level:
-		h.xp -= HERO_XP_PER_LEVEL * h.level
+	while h.xp >= _hero_xp_to_next(h.level):
+		h.xp -= _hero_xp_to_next(h.level)
 		h.level += 1
 		h.max_hp += 2
 		h.hp = h.max_hp
@@ -3795,15 +3835,15 @@ func _hero_gain_xp(h, n: int) -> void:
 	_hero_level_check(h)
 
 func hero_activity_xp(h, activity: String) -> int:
-	# M7.2: a venture well done is its own lesson. The base award keeps
-	# exploration, husbandry, hunting, gambling and honest work worth doing;
-	# a class's core pursuit pays double, so heroes grow along the path their
-	# personality already favors.
+	# M7.2: a venture well done is its own lesson, but a hero only learns a
+	# full lesson from their primary pursuit. Dabbling elsewhere still
+	# teaches something — a quarter as much — so heroes grow along the path
+	# their personality already favors. Combat XP is handled separately.
 	var gained: int = int(HERO_ACTIVITY_XP.get(activity, 0))
 	if gained <= 0:
 		return 0
-	if String(HERO_CORE_ACTIVITY.get(h.hero_class, "")) == activity:
-		gained += 1
+	if String(HERO_CORE_ACTIVITY.get(h.hero_class, "")) != activity:
+		gained = int(round(gained * HERO_OFF_PRIMARY_XP))
 	_hero_gain_xp(h, gained)
 	return gained
 

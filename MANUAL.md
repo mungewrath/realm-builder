@@ -111,7 +111,7 @@ You influence heroes through:
 
 ### Hero Classes
 
-- **Rogue** — attracted by taverns and sewers. Loves treasure and bounties, hunts, and carouses. Rogues are the classic treasure-chaser.
+- **Rogue** — attracted by taverns and sewers. A gambler and treasure-chaser who loves bounties, hunts, and carouses.
 - **Warrior** — attracted by guardhouses and blacksmiths. Reliable fighter, likes bounties, and will lend a hand at a worksite.
 - **Paladin** — attracted by shrines. Drawn to smiting evil, prays at shrines, and is a strong front-line defender.
 - **Druid** — attracted by herbalist groves. Protects wild lairs, dislikes pollution, and may leave a realm that defiles too much land.
@@ -123,7 +123,7 @@ You influence heroes through:
 
 ### Hero Levels and Gear
 
-Heroes earn experience from meaningful ventures: kills and den clears, exploring, hunting, tending wild lairs, looting treasure, honest worksite labour, and carousing. A class's core pursuit pays extra, so heroes tend to grow along the path they already favour.
+Heroes earn experience from meaningful ventures: kills and den clears, exploring, hunting, tending wild lairs, looting treasure, honest worksite labour, and carousing. A class's primary pursuit pays in full, while activities outside it teach only a small fraction, so heroes grow along the path they already favour rather than by dabbling everywhere. Combat experience is unaffected by this. Each new level asks for a little more experience than the last, with the cost rising gradually faster at higher levels.
 
 Hero attacks are not guaranteed. A **level-1 hero has about 40% accuracy**; each level adds **5 points of accuracy**, up to **90%**. The damage dealt by a hit rises much more slowly than raw level—roughly **+1 every third level**—and den sieges use the same accuracy and damage. Higher levels therefore make heroes more reliable rather than multiplying their damage.
 
@@ -147,7 +147,7 @@ If the population falls and the realm is over its cap, the realm warns you. Afte
 
 You can post a bounty on any lair you have charted, including wild lairs as well as hostile camps. You can also post an **explore bounty on a reachable spot of uncharted map**; the first hero to reach that spot charts it and claims the purse. The crown keeps a small fee; the rest goes onto the flag. Bounties stack, so adding more gold makes the flag more tempting.
 
-Heroes decide for themselves whether a bounty is worth the trip. A rogue may race toward treasure; a paladin may prefer a nearby evil lair; a barbarian may be pulled by a strong flag and a full mead hall. The same is true of an explore flag: it makes a blank patch of map a destination, but does not command a specific hero to go. This is the main way to aim heroes without giving them orders.
+Heroes decide for themselves whether a bounty is worth the trip. A bounty's pull grows with the reward, but it is strongest on heroes who already care about hunting bounties: rogues are the readiest to chase a flag, barbarians and warriors are close behind, and the less inclined may need a richer reward to stir. The pull is also weighed against the trip and the fight — a far lair or a tough den needs a richer reward to draw the same attention. A rogue may still race toward treasure; a paladin may prefer a nearby evil lair; a barbarian may be pulled by a strong flag and a full mead hall. The same is true of an explore flag: it makes a blank patch of map a destination, but does not command a specific hero to go. This is the main way to aim heroes without giving them orders.
 
 ## Combat and Threats
 

@@ -176,7 +176,7 @@ func _test_incentive_snapshot() -> void:
 	var s: Dictionary = sim.hero_goal_scores(rogue)
 	# A loot pile is risk-free coin and scores a good deal higher than a
 	# bounty of similar size: the rogue goes for the pile, not the flag.
-	var expect := {"bounty": 8, "treasure": 20, "smite": 2, "patrol": 1}
+	var expect := {"bounty": 12, "treasure": 20, "smite": 2, "patrol": 1}
 	if s.size() != expect.size():
 		_fail("rogue score keys wrong: %s" % s)
 	for k in expect:
@@ -190,7 +190,7 @@ func _test_incentive_snapshot() -> void:
 	if paladin == null:
 		return
 	s = sim.hero_goal_scores(paladin)
-	expect = {"bounty": 7, "smite": 10, "assist": 4, "patrol": 1}
+	expect = {"bounty": 5, "smite": 10, "assist": 4, "patrol": 1}
 	if s.size() != expect.size():
 		_fail("paladin score keys wrong: %s" % s)
 	for k in expect:
@@ -199,12 +199,12 @@ func _test_incentive_snapshot() -> void:
 	if sim._best_hero_goal(s) != "smite":
 		_fail("paladin should smite, got %s" % sim._best_hero_goal(s))
 
-	# Warrior: the bounty flag dominates.
+	# Warrior: the bounty flag still edges out the pile.
 	var warrior = _spawn_at(sim, "warrior", sim.keep_pos + Vector2i(-1, -2))
 	if warrior == null:
 		return
 	s = sim.hero_goal_scores(warrior)
-	expect = {"bounty": 12, "treasure": 10, "smite": 4, "assist": 3, "patrol": 1}
+	expect = {"bounty": 10, "treasure": 10, "smite": 4, "assist": 3, "patrol": 1}
 	if s.size() != expect.size():
 		_fail("warrior score keys wrong: %s" % s)
 	for k in expect:
@@ -212,6 +212,20 @@ func _test_incentive_snapshot() -> void:
 			_fail("warrior score %s = %d, expected %d" % [k, int(s.get(k, -1)), expect[k]])
 	if sim._best_hero_goal(s) != "bounty":
 		_fail("warrior should chase the bounty, got %s" % sim._best_hero_goal(s))
+
+	# Dampening must not flatten class character: a rogue is the readiest
+	# bounty-hunter, and the flag pulls the less inclined more gently.
+	var rogue_bounty: int = int(sim.hero_goal_scores(rogue).bounty)
+	for cls in ["warrior", "paladin", "barbarian"]:
+		var other = _spawn_at(sim, cls, sim.keep_pos + Vector2i(0, -3))
+		if other == null:
+			return
+		var other_bounty: int = int(sim.hero_goal_scores(other).get("bounty", 0))
+		if other_bounty >= rogue_bounty:
+			_fail("%s bounty pull %d should trail rogue's %d" \
+				% [cls, other_bounty, rogue_bounty])
+	if int(sim.hero_goal_scores(rogue).bounty) >= int(sim.hero_goal_scores(rogue).treasure):
+		_fail("bounty should not outrank a risk-free pile for a rogue")
 
 func _test_shop_and_rest_loop() -> void:
 	var sim = _make_sim(227)
