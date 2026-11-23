@@ -4025,12 +4025,17 @@ func _combat_step() -> void:
 	for foe in hostiles:
 		var damage := 0
 		var hitters := []
+		var engaged := false
 		for g in guards:
-			if g.adjacent_to(foe.tile()) and rng.randf() < guard_accuracy(g):
+			if not g.adjacent_to(foe.tile()):
+				continue
+			engaged = true
+			if rng.randf() < guard_accuracy(g):
 				damage += guard_melee_damage(g)
 		for h in heroes:
 			if not h.adjacent_to(foe.tile()):
 				continue
+			engaged = true
 			# Heroes can miss. Accuracy rises with level, while damage per
 			# hit rises only every few levels; gear still adds a point.
 			if rng.randf() < hero_accuracy(h):
@@ -4038,11 +4043,12 @@ func _combat_step() -> void:
 				hitters.append(h)
 		for u in allies:
 			if u.adjacent_to(foe.tile()):
+				engaged = true
 				damage += 2
-		if damage > 0:
-			# Combat interrupts behavior: the foe turns to defend itself.
+		if engaged and foe.state != AgentC.FLEEING:
 			foe.fighting = true
 			foe.behavior_left = 0
+		if damage > 0:
 			var wounded: bool = foe.hp > 0
 			foe.hurt(damage)
 			if wounded and foe.hp <= 0:
@@ -4058,7 +4064,8 @@ func _combat_step() -> void:
 			adjacent += 1
 			if rng.randf() < monster_accuracy(foe):
 				enemies += 1
-		if adjacent > 0 and (d.kind == "hero" or d.kind == "undead"):
+		if adjacent > 0 and (d.kind == "hero" or d.kind == "guard" \
+				or d.kind == "undead"):
 			d.fighting = true
 		if enemies > 0:
 			d.hurt(enemies)
