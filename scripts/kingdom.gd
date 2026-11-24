@@ -331,6 +331,7 @@ var world
 var buildings := {}
 var building_padding := true
 var building_footprints := true
+var seed_starting_buildings := true
 # Tile -> origin index. Building dictionaries are still the source of truth;
 # the cache rebuilds whenever the count or footprint mode changes, so direct
 # test fixtures and normal construction both stay correct.
@@ -522,9 +523,9 @@ const FACTION_BASE_TENSION := {
 const CREATURE_STATS := {
 	"rabbit": {"speed": 2.2, "hp": 1, "carry": 2},
 	"wolf": {"speed": 3.0, "hp": 3, "carry": 3},
-	"spider": {"speed": 2.4, "hp": 3, "carry": 2},
-	"frog": {"speed": 2.0, "hp": 1, "carry": 2},
-	"owlbear": {"speed": 2.8, "hp": 6, "carry": 4},
+	"spider": {"speed": 2.0, "hp": 3, "carry": 2},
+	"frog": {"speed": 1.7, "hp": 1, "carry": 2},
+	"owlbear": {"speed": 2.4, "hp": 6, "carry": 4},
 }
 
 const WILD_DEN_FOOD_START := 5
@@ -731,7 +732,8 @@ func attach_world(w) -> void:
 		_stamp_explored(keep_pos, KEEP_REVEAL)
 	else:
 		_reveal_everything()
-	_seed_starting_buildings()
+	if seed_starting_buildings:
+		_seed_starting_buildings()
 	_sync_peasants()
 	_hero_over_cap_warnings_left = hero_over_cap_warnings
 	_hero_over_cap_warn_in = 0
@@ -1160,8 +1162,8 @@ func deliver(a) -> void:
 func _spawn_peasant() -> void:
 	var a = AgentC.new()
 	a.setup(self, "peasant", keep_pos)
+	a.speed = 1.0
 	agents.append(a)
-
 func _peasant_count() -> int:
 	var n := 0
 	for a in agents:
@@ -1211,6 +1213,7 @@ func _sync_peasants() -> void:
 func _spawn_collector() -> void:
 	collector = AgentC.new()
 	collector.setup(self, "collector", keep_pos)
+	collector.speed = 1.0
 	agents.append(collector)
 	last_event = "A tax collector now serves the keep"
 
@@ -1404,7 +1407,7 @@ func _spawn_undead(grave: Vector2i, hostile: bool) -> void:
 	a.setup(self, "undead", grave)
 	a.home = grave
 	a.undead_side = "hostile" if hostile else "ally"
-	a.speed = 2.2 if hostile else 2.0
+	a.speed = 1.8 if hostile else 1.7
 	a.max_hp = 6 if hostile else 5
 	a.hp = a.max_hp
 	a.decay_left = 0 if hostile else undead_loyalty_ticks
@@ -3097,6 +3100,7 @@ func _spawn_bandit(den_pos: Vector2i) -> void:
 	var a = AgentC.new()
 	a.setup(self, "bandit", den_pos)
 	a.home = den_pos
+	a.speed = 2.6
 	agents.append(a)
 	bandits_spawned += 1
 
@@ -3245,6 +3249,25 @@ func _spawn_hero(cls: String) -> void:
 	a.max_hp = int(HERO_CLASSES[cls].hp)
 	a.hp = a.max_hp
 	a.home = hall
+	match cls:
+		"rogue", "ranger":
+			a.speed = 3.0
+		"warrior":
+			a.speed = 1.9
+		"paladin":
+			a.speed = 1.6
+		"druid":
+			a.speed = 1.8
+		"dwarf":
+			a.speed = 1.7
+		"wizard":
+			a.speed = 2.0
+		"barbarian":
+			a.speed = 1.5
+		"necromancer":
+			a.speed = 1.7
+		_:
+			a.speed = 1.8
 	a.assign(a.home, AgentC.RECRUIT)
 	agents.append(a)
 	heroes_spawned += 1

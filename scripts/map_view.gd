@@ -1,6 +1,7 @@
 extends Node2D
 
 signal tile_clicked(p: Vector2i)
+signal fog_revealed
 
 const TILE := 32
 const MIN_SCALE := 0.6
@@ -73,7 +74,14 @@ var _terrain_version := -1
 var _fog_version := -1
 var _fog_enabled := false
 var _fog_texture: ImageTexture
+var _fog_pending := false
+var _explored_view := PackedByteArray()
 
+# Interpolated movement: previous tick positions and timing for smooth
+# rendering between discrete sim ticks.
+var _prev_positions := {}
+var _tick_start_time := 0.0
+var _tick_length := 1.0
 # Placement preview: a translucent ghost of the selected building plus its
 # one-tile padding ring. Green means the tile can be confirmed; red means
 # blocked by terrain, fog, another structure, or the treasury.
@@ -99,9 +107,26 @@ func setup(w, sim_ref) -> void:
 	sim = sim_ref
 	buildings = sim.buildings
 	_bake_scale = 2.0 if world.SIZE_X <= 96 else 1.0
-	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 	set_process(true)
 	queue_redraw()
+
+func set_tick_length(v: float) -> void:
+	_tick_length = maxf(0.001, v)
+
+func reveal_ready() -> bool:
+	# Fog reveals halfway through a tick so newly charted ground appears as
+	# the unit arrives, not before it has visibly moved.
+	var elapsed: float = Time.get_ticks_msec() / 1000.0 - _tick_start_time
+	return elapsed >= _tick_length * 0.5
+
+func begin_tick() -> void:
+	_prev_positions.clear()
+	if sim == null:
+		return
+	for a in sim.agents:
+		_prev_positions[a] = a.pos
+	_tick_start_time = Time.get_ticks_msec() / 1000.0
 
 func _process(_delta: float) -> void:
 	if world == null:
@@ -112,13 +137,25 @@ func _process(_delta: float) -> void:
 	_sync_chunks()
 	if sim != null:
 		var fv: int = sim.fog_version if sim.fog_enabled else -1
-		if fv != _fog_version or sim.fog_enabled != _fog_enabled:
+		var fog_toggled: bool = sim.fog_enabled != _fog_enabled
+		if fog_toggled or _fog_version == -1:
 			_fog_version = fv
 			_fog_enabled = sim.fog_enabled
+			_fog_pending = false
+			_rebuild_fog()
+			queue_redraw()
+		elif fv != _fog_version:
+			_fog_pending = true
+		if _fog_pending and reveal_ready():
+			_fog_version = fv
+			_fog_pending = false
 			_rebuild_fog()
 			queue_redraw()
 	_update_chunk_bakes()
-
+	if sim != null:
+		var elapsed: float = Time.get_ticks_msec() / 1000.0 - _tick_start_time
+		if elapsed < _tick_length:
+			queue_redraw()
 func _chunk_cols() -> int:
 	return (world.SIZE_X + CHUNK_TILES - 1) / CHUNK_TILES
 
@@ -219,24 +256,27 @@ func _rebuild_fog() -> void:
 		return
 	var w: int = world.SIZE_X
 	var h: int = world.SIZE_Y
+	_explored_view = sim.explored.duplicate()
+	# One pixel per tile, white RGB: the fog colour is supplied by the draw
+	# modulate. Linear filtering smooths the frontier on the GPU, so there is
+	# no per-tile neighbour work on the CPU.
 	var data := PackedByteArray()
 	data.resize(w * h * 4)
-	var r := int(roundf(FOG_DARK.r * 255.0))
-	var g := int(roundf(FOG_DARK.g * 255.0))
-	var b := int(roundf(FOG_DARK.b * 255.0))
+	data.fill(255)
 	var fog_on: bool = sim.fog_enabled
-	for y in h:
-		for x in w:
-			var a := 0
-			if fog_on and sim.explored[y * w + x] == 0:
-				a = int(roundf(_fog_alpha(Vector2i(x, y)) * 255.0))
-			var i: int = (y * w + x) * 4
-			data[i] = r
-			data[i + 1] = g
-			data[i + 2] = b
-			data[i + 3] = a
+	for i in w * h:
+		if not fog_on or _explored_view[i] == 1:
+			data[i * 4 + 3] = 0
 	var img := Image.create_from_data(w, h, false, Image.FORMAT_RGBA8, data)
-	_fog_texture = ImageTexture.create_from_image(img)
+	if _fog_texture == null or _fog_texture.get_width() != w \
+			or _fog_texture.get_height() != h:
+		_fog_texture = ImageTexture.create_from_image(img)
+	else:
+		_fog_texture.update(img)
+	fog_revealed.emit()
+
+func fog_texture() -> ImageTexture:
+	return _fog_texture
 
 func set_placement(kind: String, p: Vector2i, valid: bool) -> void:
 	placement_kind = kind
@@ -392,7 +432,8 @@ func _draw() -> void:
 	# explored layer changes, so the veil costs a single quad per frame.
 	if _fog_texture != null:
 		draw_texture_rect(_fog_texture,
-			Rect2(Vector2.ZERO, Vector2(world.SIZE_X, world.SIZE_Y) * TILE), false)
+			Rect2(Vector2.ZERO, Vector2(world.SIZE_X, world.SIZE_Y) * TILE),
+			false, FOG_DARK)
 	if sim != null and sim.get("terrain_works") != null:
 		for p in sim.terrain_works:
 			if _fog_level(p) > 0:
@@ -477,15 +518,10 @@ func _fog_level(p: Vector2i) -> int:
 		return 2
 	if not world.in_bounds(p):
 		return 0
-	return 2 if sim.explored[p.y * world.SIZE_X + p.x] == 1 else 0
-
-func _fog_alpha(p: Vector2i) -> float:
-	# Unseen ground is fully opaque; only tiles bordering charted land get a
-	# lighter veil, so the frontier reads soft without leaking terrain.
-	var best := 0
-	for d in world.DIRS_ALL:
-		best = maxi(best, _fog_level(p + d))
-	return 0.75 if best == 2 else 1.0
+	var i: int = p.y * world.SIZE_X + p.x
+	if _explored_view.size() == world.SIZE_X * world.SIZE_Y:
+		return 2 if _explored_view[i] == 1 else 0
+	return 2 if sim.explored[i] == 1 else 0
 
 func center_on(p: Vector2i) -> void:
 	# Minimap jumps land the tapped tile in the middle of the viewport.
@@ -918,7 +954,12 @@ func _draw_agents() -> void:
 				or (a.kind == "undead" and a.undead_side == "hostile")) \
 				and _fog_level(a.tile()) < 2:
 			continue
-		var c: Vector2 = a.pos * float(TILE)
+		var prev: Vector2 = _prev_positions.get(a, a.pos)
+		var elapsed: float = Time.get_ticks_msec() / 1000.0 - _tick_start_time
+		var t: float = clampf(elapsed / _tick_length, 0.0, 1.0)
+		t = t * t * (3.0 - 2.0 * t)
+		var render_pos: Vector2 = prev.lerp(a.pos, t)
+		var c: Vector2 = render_pos * float(TILE)
 		match a.kind:
 			"collector":
 				draw_circle(c, 5.0, Color(0.35, 0.25, 0.15))

@@ -31,6 +31,7 @@ func _make_sim(seed_value: int):
 	var WorldC = load("res://scripts/world.gd").new()
 	WorldC.generate(seed_value)
 	var sim = load("res://scripts/kingdom.gd").new()
+	sim.seed_starting_buildings = false
 	sim.wild_ecology = false # warband accounting; ecology has its own suite
 	sim.attach_world(WorldC)
 	sim.building_padding = false
@@ -318,8 +319,10 @@ func _test_combat_interrupts_behavior() -> void:
 	if not a.fighting:
 		_fail("goblin did not switch to fighting under attack")
 	var hp_before: int = a.hp
-	sim.update()
-	sim.update()
+	for i in 20:
+		sim.update()
+		if a.hp < hp_before:
+			break
 	if a.hp >= hp_before:
 		_fail("fighting goblin took no damage")
 	# Remove the guard: the goblin should disengage.

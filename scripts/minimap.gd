@@ -22,8 +22,7 @@ var map_view: Node2D
 
 var _px := 3.0 # pixels per tile, shrinks so a huge map still fits the corner
 var _terrain_version := -1
-var _fog_version := -1
-var _fog_enabled := false
+var _explored_view := PackedByteArray()
 var _map_texture: ImageTexture
 
 func setup(w, sim_ref, view_ref: Node2D) -> void:
@@ -34,38 +33,47 @@ func setup(w, sim_ref, view_ref: Node2D) -> void:
 	custom_minimum_size = Vector2(w.SIZE_X * _px, w.SIZE_Y * _px)
 	size = custom_minimum_size
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	if map_view != null and map_view.has_signal("fog_revealed"):
+		map_view.fog_revealed.connect(_on_fog_revealed)
 	set_process(true)
 	queue_redraw()
 
 func _process(_delta: float) -> void:
 	if world == null or sim == null:
 		return
-	if world.version != _terrain_version or sim.fog_version != _fog_version \
-			or sim.fog_enabled != _fog_enabled:
+	if world.version != _terrain_version:
 		_terrain_version = world.version
-		_fog_version = sim.fog_version
-		_fog_enabled = sim.fog_enabled
 		_rebuild_map_texture()
 		queue_redraw()
+
+func _on_fog_revealed() -> void:
+	_explored_view = sim.explored.duplicate()
+	queue_redraw()
+
+func _explored_at(i: int) -> bool:
+	if _explored_view.size() > i:
+		return _explored_view[i] == 1
+	return sim.explored[i] == 1
 
 func _rebuild_map_texture() -> void:
 	var w: int = world.SIZE_X
 	var h: int = world.SIZE_Y
 	var data := PackedByteArray()
 	data.resize(w * h * 4)
-	for y in h:
-		for x in w:
-			var i: int = y * w + x
-			var col: Color = UNCHARTED
-			if not sim.fog_enabled or sim.explored[i] == 1:
-				col = TERRAIN_COLORS[world.tiles[i]]
-			var j: int = i * 4
-			data[j] = int(roundf(col.r * 255.0))
-			data[j + 1] = int(roundf(col.g * 255.0))
-			data[j + 2] = int(roundf(col.b * 255.0))
-			data[j + 3] = 255
+	for i in w * h:
+		var col: Color = TERRAIN_COLORS[world.tiles[i]]
+		var j: int = i * 4
+		data[j] = int(roundf(col.r * 255.0))
+		data[j + 1] = int(roundf(col.g * 255.0))
+		data[j + 2] = int(roundf(col.b * 255.0))
+		data[j + 3] = 255
 	var img := Image.create_from_data(w, h, false, Image.FORMAT_RGBA8, data)
-	_map_texture = ImageTexture.create_from_image(img)
+	if _map_texture == null or _map_texture.get_width() != w \
+			or _map_texture.get_height() != h:
+		_map_texture = ImageTexture.create_from_image(img)
+	else:
+		_map_texture.update(img)
 
 func _gui_input(event: InputEvent) -> void:
 	if world == null or map_view == null:
@@ -88,6 +96,10 @@ func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), UNCHARTED)
 	if _map_texture != null:
 		draw_texture_rect(_map_texture, Rect2(Vector2.ZERO, size), false)
+	if sim.fog_enabled and map_view != null and map_view.has_method("fog_texture"):
+		var fog_tex = map_view.fog_texture()
+		if fog_tex != null:
+			draw_texture_rect(fog_tex, Rect2(Vector2.ZERO, size), false, UNCHARTED)
 	var buildings: Dictionary = sim.buildings
 	for p in buildings:
 		var kind: String = buildings[p].kind
@@ -95,14 +107,14 @@ func _draw() -> void:
 		if kind == "castle":
 			col = GOLD
 		for q in sim.building_tiles(p, kind):
-			if sim.fog_enabled and sim.explored[q.y * world.SIZE_X + q.x] == 0:
+			if sim.fog_enabled and not _explored_at(q.y * world.SIZE_X + q.x):
 				continue
 			draw_rect(Rect2(Vector2(q) * _px, Vector2(_px, _px)), col)
 	if sim.get("dens") != null:
 		for p in sim.dens:
 			# Landmarks appear on the minimap only once charted. Hostile
 			# dens burn red; wild lairs read as earthy ground.
-			if sim.fog_enabled and sim.explored[p.y * world.SIZE_X + p.x] == 0:
+			if sim.fog_enabled and not _explored_at(p.y * world.SIZE_X + p.x):
 				continue
 			var hostile: bool = sim.DEN_KINDS[sim.dens[p].get("kind", "goblin_den")].hostile
 			draw_rect(Rect2(Vector2(p) * _px, Vector2(_px, _px)),

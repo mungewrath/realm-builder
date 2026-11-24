@@ -76,6 +76,7 @@ func _ready() -> void:
 	world.generate(20261114)
 	sim.attach_world(world)
 	map_view.setup(world, sim)
+	map_view.set_tick_length(1.0 / sim_speed)
 	map_view.center_on(sim.keep_pos)
 	map_view.tile_clicked.connect(_on_tile_clicked)
 	farm_button.pressed.connect(_on_farm_pressed)
@@ -215,6 +216,7 @@ func _refresh_placement() -> void:
 	log_button.visible = false
 
 func _on_tick() -> void:
+	map_view.begin_tick()
 	sim.update()
 	map_view.queue_redraw()
 	minimap.queue_redraw()
@@ -1017,9 +1019,9 @@ func _set_speed(s: float) -> void:
 	sim_speed = s
 	tick_timer.wait_time = 1.0 / s
 	tick_timer.start()
+	map_view.set_tick_length(1.0 / s)
 	speed_label.text = "Sim speed  ·  now %sx" % str(s)
 	_mark_speed_buttons()
-
 func _mark_speed_buttons() -> void:
 	for s in speed_buttons:
 		speed_buttons[s].set_pressed_no_signal(is_equal_approx(s, sim_speed))

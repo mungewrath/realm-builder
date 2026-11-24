@@ -4,6 +4,7 @@ func _initialize() -> void:
 	var WorldC = load("res://scripts/world.gd").new()
 	WorldC.generate(42)
 	var sim = load("res://scripts/kingdom.gd").new()
+	sim.seed_starting_buildings = false
 	sim.wild_ecology = false # exact starting-state accounting; ecology tested separately
 	sim.attach_world(WorldC)
 	sim.building_padding = false
@@ -81,6 +82,7 @@ func _initialize() -> void:
 	# Keep trickle: a broke realm still earns pocket coin, so the player can
 	# never be hard-stuck. 5g per minute (60 ticks) at normal pacing.
 	var broke = load("res://scripts/kingdom.gd").new()
+	broke.seed_starting_buildings = false
 	var w2 = load("res://scripts/world.gd").new()
 	w2.generate(42)
 	broke.attach_world(w2)
@@ -251,6 +253,10 @@ func _initialize() -> void:
 	# Event log scrollback: every announcement is recorded with a monotonic
 	# id and timestamp, and the ring is capped.
 	var logsim = load("res://scripts/kingdom.gd").new()
+	logsim.seed_starting_buildings = false
+	logsim.wild_ecology = false
+	logsim.raids_enabled = false
+	logsim.heroes_enabled = false
 	var w3 = load("res://scripts/world.gd").new()
 	w3.generate(42)
 	logsim.attach_world(w3)

@@ -26,6 +26,7 @@ func _make_sim(seed_value: int):
 	var WorldC = load("res://scripts/world.gd").new()
 	WorldC.generate(seed_value)
 	var sim = load("res://scripts/kingdom.gd").new()
+	sim.seed_starting_buildings = false
 	sim.wild_ecology = false # exact accounting; ecology has its own suite
 	sim.attach_world(WorldC)
 	sim.building_padding = false

@@ -114,7 +114,7 @@ func setup(k, kind_value: String, spawn: Vector2i) -> void:
 			max_hp = hp
 			# Warbands march with a stagger so they don't arrive as one blob,
 			# but never faster than a guard.
-			speed = SPEED * (0.7 + 0.3 * kingdom.rng.randf())
+			speed = SPEED * (0.55 + 0.2 * kingdom.rng.randf())
 		"guard":
 			hp = kingdom.guard_hp
 			max_hp = hp
