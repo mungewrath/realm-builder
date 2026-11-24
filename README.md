@@ -46,6 +46,11 @@ mv /tmp/godot_tpz/templates/* ~/.local/share/godot/export_templates/4.7.2.stable
 ## Common commands (from the repo root)
 
 ```sh
+# Run the whole suite (long suites can take a few minutes)
+./run_tests.sh
+# Quick shallow validation (skips long-running suites)
+./run_tests.sh --quick
+
 # Run the sim logic test (headless)
 godot --headless --script tests/sim_test.gd
 
