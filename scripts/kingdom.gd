@@ -201,8 +201,8 @@ const HERO_CLASSES := {
 # Ventures outrank leisure, leisure outranks idle strolling; ties break
 # toward the earlier entry.
 const HERO_GOAL_PRIORITY := ["rest", "leave", "gear", "shop", "smite",
-	"bounty", "treasure", "protect", "hunt", "pray", "carouse", "explore",
-	"assist", "patrol"]
+	"bounty", "explore_bounty", "treasure", "protect", "hunt", "pray", "carouse",
+	"explore", "assist", "patrol"]
 
 # M7.1 — hall production pacing. Stocks are per-building; the globals only
 # total what the realm has produced for the inspector and tests.
@@ -3435,10 +3435,10 @@ func hero_goal_scores(h) -> Dictionary:
 		scores["bounty"] = int(w.bounty) \
 			+ int(bounty_appeal / 2.0) \
 			+ _mead_morale_bonus()
-	var explore_spot := _best_explore_bounty(h.tile())
-	if explore_spot.x >= 0:
-		var explore_appeal := _explore_bounty_appeal(explore_spot, h.tile())
-		scores["explore"] = 4 + int(w.get("explore", 0)) \
+	var explore_bounty_spot := _best_explore_bounty(h.tile())
+	if explore_bounty_spot.x >= 0:
+		var explore_appeal := _explore_bounty_appeal(explore_bounty_spot, h.tile())
+		scores["explore_bounty"] = int(w.get("explore", 0)) \
 			+ int(explore_appeal / 4.0)
 	var known_dens := _dens_known_to_realm()
 	if int(w.smite_evil) > 0 and not known_dens.is_empty():
@@ -3493,7 +3493,7 @@ func hero_goal_scores(h) -> Dictionary:
 	# Unknown land beats idle strolling: with no venture on the books, a
 	# hero heads for the frontier about half the time (a coin-flip against
 	# patrolling, broken toward exploring on the tie).
-	if not scores.has("explore") and _explore_target(h.tile()).x >= 0:
+	if _explore_frontier_target(h.tile()).x >= 0:
 		scores["explore"] = 1 + rng.randi_range(0, 1) \
 			+ int(w.get("explore", 0))
 	# Over the realm's means, and already warned: leaving is now one of the
@@ -3585,16 +3585,16 @@ func _piles_known_to_realm() -> Array:
 			known.append(p)
 	return known
 
-func _explore_target(from: Vector2i) -> Vector2i:
-	# A posted flag outranks the nearest frontier: that is the whole point
-	# of the bounty. With no flag, find the nearest uncharted walkable tile
-	# within a short walk. A local flood is enough: heroes need a frontier
-	# to wander toward, not a proof that some far corner is reachable. The
-	# depth cap also stops a hero in a fully charted pocket from flooding
-	# the realm every decision.
-	var bounty_spot := _best_explore_bounty(from)
-	if bounty_spot.x >= 0:
-		return bounty_spot
+func _explore_bounty_target(from: Vector2i) -> Vector2i:
+	# A posted explore flag is its own venture now, distinct from wandering
+	# the uncharted frontier.
+	return _best_explore_bounty(from)
+
+func _explore_frontier_target(from: Vector2i) -> Vector2i:
+	# Find the nearest uncharted walkable tile within a short walk. A local
+	# flood is enough: heroes need a frontier to wander toward, not a proof
+	# that some far corner is reachable. The depth cap also stops a hero in
+	# a fully charted pocket from flooding the realm every decision.
 	if not fog_enabled:
 		return Vector2i(-1, -1)
 	if uncharted_open.is_empty():
@@ -3628,6 +3628,14 @@ func _explore_target(from: Vector2i) -> Vector2i:
 			queue.append(n)
 	return Vector2i(-1, -1)
 
+func _explore_target(from: Vector2i) -> Vector2i:
+	# Back-compat: a posted flag still outranks the frontier for callers that
+	# do not distinguish the two ventures.
+	var bounty_spot := _explore_bounty_target(from)
+	if bounty_spot.x >= 0:
+		return bounty_spot
+	return _explore_frontier_target(from)
+
 func _best_hero_goal(scores: Dictionary) -> String:
 	# Deterministic pick: highest score wins, ties break toward the fixed
 	# priority order. Used by tests (and any UI that wants to show a
@@ -3652,13 +3660,27 @@ func _pick_hero_goal(h, scores: Dictionary) -> String:
 	if scores.has("rest") and h.fatigue >= HERO_FATIGUE_MAX:
 		return "rest"
 	var total := 0
+	var seed := 0
+	if h != null:
+		seed = int(h.get_instance_id())
+	var weights := {}
+	var i := 0
 	for g in scores:
-		total += int(scores[g]) * int(scores[g])
+		# A per-hero nudge (deterministic by identity, no RNG consumed) keeps
+		# identical neighbours from making the identical draw every time.
+		# Bounties grow linearly so a posted flag pulls hard without becoming
+		# an automatic choice; everything else keeps the squared pull.
+		var base: int = int(scores[g])
+		# All pursuits grow linearly now: no squared amplification.
+		var w: int = base + (abs(seed + i * 37) % 3)
+		weights[g] = w
+		total += w
+		i += 1
 	if total <= 0:
 		return "patrol"
 	var roll := rng.randi_range(1, total)
 	for g in scores:
-		roll -= int(scores[g]) * int(scores[g])
+		roll -= int(weights[g])
 		if roll <= 0:
 			return g
 	return "patrol"
@@ -3732,6 +3754,21 @@ func _assign_heroes() -> void:
 	for a in agents:
 		if a.kind != "hero":
 			continue
+		# An explore venture can be invalidated while underway (a posted
+		# flag gets claimed, or a frontier tile gets charted by someone
+		# else). Drop it and re-decide instead of finishing a stale trip.
+		if a.state == AgentC.TO_TARGET and a.purpose == AgentC.EXPLORE:
+			var stale := false
+			if a.goal == "explore_bounty" and not explore_bounties.has(a.target):
+				stale = true
+			elif a.goal == "explore" and explored_at(a.target):
+				stale = true
+			if stale:
+				a.state = AgentC.IDLE
+				a.purpose = ""
+				a.goal = ""
+				a.path = []
+				a.decision_left = 0
 		_hero_level_check(a)
 		if a.hero_class == "druid" and pollution >= druid_pollution_limit:
 			# The realm has despoiled too much of the land; the druid
@@ -3748,44 +3785,58 @@ func _assign_heroes() -> void:
 		_hero_decide(a)
 
 func _hero_decide(h) -> void:
+	var origin: Vector2i = h.tile()
+	var from: Vector2i = origin
+	if world != null:
+		var seed := int(h.get_instance_id())
+		var offsets := [Vector2i(-2, -1), Vector2i(-1, 2), Vector2i(2, -2),
+			Vector2i(1, 1), Vector2i(-2, 2), Vector2i(2, 1)]
+		var start: int = abs(seed) % offsets.size()
+		for i in offsets.size():
+			var cand: Vector2i = origin + offsets[(start + i) % offsets.size()]
+			if world.in_bounds(cand) and _open_ground(cand):
+				from = cand
+				break
 	var goal := _pick_hero_goal(h, hero_goal_scores(h))
 	h.goal = goal
 	h.decision_left = 2 + rng.randi_range(0, 4)
 	match goal:
 		"leave":
-			h.assign(_leave_target(h.tile()), AgentC.LEAVE)
+			h.assign(_leave_target(from), AgentC.LEAVE)
 		"gear":
-			h.assign(_nearest_forge_with_gear(h.tile()), AgentC.GEAR)
+			h.assign(_nearest_forge_with_gear(from), AgentC.GEAR)
 		"shop":
-			h.assign(_nearest_complete("market", h.tile()), AgentC.SHOP)
+			h.assign(_nearest_complete("market", from), AgentC.SHOP)
 		"rest":
 			h.assign(hero_rest_spot(h), AgentC.REST)
 		"smite":
-			var den := _nearest_den(h.tile())
+			var den := _nearest_den(from)
 			h.quest_den = den
-			h.assign(den_doorstep(den, h.tile()), AgentC.ASSAULT)
+			h.assign(den_doorstep(den, from), AgentC.ASSAULT)
 		"bounty":
-			var den := _best_bounty(h.tile())
+			var den := _best_bounty(from)
 			h.quest_den = den
-			h.assign(den_doorstep(den, h.tile()), AgentC.ASSAULT)
+			h.assign(den_doorstep(den, from), AgentC.ASSAULT)
 		"treasure":
-			h.assign(_nearest_pile(h.tile()), AgentC.TREASURE)
+			h.assign(_nearest_pile(from), AgentC.TREASURE)
 		"protect":
-			h.assign(_nearest_known_wild(h.tile()), AgentC.PROTECT)
+			h.assign(_nearest_known_wild(from), AgentC.PROTECT)
 		"hunt":
-			h.assign(_nearest_known_warren(h.tile()), AgentC.HUNT)
+			h.assign(_nearest_known_warren(from), AgentC.HUNT)
 		"pray":
-			h.assign(_nearest_complete("shrine", h.tile()), AgentC.PRAY)
+			h.assign(_nearest_complete("shrine", from), AgentC.PRAY)
 		"carouse":
-			h.assign(_nearest_complete("tavern", h.tile()), AgentC.CAROUSE)
+			h.assign(_nearest_complete("tavern", from), AgentC.CAROUSE)
 		"explore":
-			h.assign(_explore_target(h.tile()), AgentC.EXPLORE)
+			h.assign(_explore_frontier_target(from), AgentC.EXPLORE)
+		"explore_bounty":
+			h.assign(_explore_bounty_target(from), AgentC.EXPLORE)
 		"assist":
-			var site := _nearest_free_site(h.tile())
-			h.assign(site if site.x >= 0 else _nearest_free_terrain(h.tile()),
+			var site := _nearest_free_site(from)
+			h.assign(site if site.x >= 0 else _nearest_free_terrain(from),
 				AgentC.ASSIST)
 		_:
-			h.assign(_wilds_spot(keep_pos, 5, h.tile()), AgentC.WANDER)
+			h.assign(_wilds_spot(keep_pos, 5, from), AgentC.WANDER)
 
 func hero_count() -> int:
 	var n := 0

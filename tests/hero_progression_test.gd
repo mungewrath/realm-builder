@@ -103,7 +103,7 @@ func _test_explore_xp() -> void:
 	var h = _hero(sim, "wizard", sim.keep_pos)
 	_fresh_xp(h)
 	h.pos = Vector2(sim.keep_pos) + Vector2(0.5, 0.5)
-	var target: Vector2i = sim._explore_target(h.tile())
+	var target: Vector2i = sim._explore_frontier_target(h.tile())
 	if target.x < 0:
 		_fail("no frontier to explore for the xp test")
 		return

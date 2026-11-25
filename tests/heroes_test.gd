@@ -469,7 +469,7 @@ func _test_explore_bounty_flow() -> void:
 	sim.raids_enabled = false
 	sim.dens.clear()
 	sim.gold = 100
-	var target: Vector2i = sim._explore_target(sim.keep_pos)
+	var target: Vector2i = sim._explore_frontier_target(sim.keep_pos)
 	if target.x < 0:
 		_fail("no uncharted target to flag")
 		return
@@ -493,9 +493,9 @@ func _test_explore_bounty_flow() -> void:
 	var h = _spawn_at(sim, "wizard", sim.keep_pos)
 	if h == null:
 		return
-	if not sim.hero_goal_scores(h).has("explore"):
+	if not sim.hero_goal_scores(h).has("explore_bounty"):
 		_fail("explore bounty did not enter the hero's goal table")
-	if sim._explore_target(h.tile()) != target:
+	if sim._explore_bounty_target(h.tile()) != target:
 		_fail("hero did not prefer the explore bounty target")
 	h.assign(target, "explore")
 	for i in 2000:

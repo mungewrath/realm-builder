@@ -80,6 +80,7 @@ var _explored_view := PackedByteArray()
 # Interpolated movement: previous tick positions and timing for smooth
 # rendering between discrete sim ticks.
 var _prev_positions := {}
+var _prev_visual := {}
 var _tick_start_time := 0.0
 var _tick_length := 1.0
 # Placement preview: a translucent ghost of the selected building plus its
@@ -122,10 +123,13 @@ func reveal_ready() -> bool:
 
 func begin_tick() -> void:
 	_prev_positions.clear()
+	_prev_visual.clear()
 	if sim == null:
 		return
 	for a in sim.agents:
 		_prev_positions[a] = a.pos
+		# Hold icon/level changes until the agent has visibly arrived.
+		_prev_visual[a] = [a.carrying, a.pouch, a.purpose, a.level, a.gear]
 	_tick_start_time = Time.get_ticks_msec() / 1000.0
 
 func _process(_delta: float) -> void:
@@ -960,10 +964,21 @@ func _draw_agents() -> void:
 		t = t * t * (3.0 - 2.0 * t)
 		var render_pos: Vector2 = prev.lerp(a.pos, t)
 		var c: Vector2 = render_pos * float(TILE)
+		# State-derived visuals (loot, purse, pips) switch only once a moving
+		# agent has reached the tick's destination. Agents that act in place
+		# can update immediately, since their position is already correct.
+		var vs: Array = _prev_visual.get(a, [])
+		var moved: bool = prev != a.pos
+		var use_old: bool = not vs.is_empty() and moved and elapsed < _tick_length
+		var carrying: int = int(vs[0]) if use_old else a.carrying
+		var pouch: int = int(vs[1]) if use_old else a.pouch
+		var purpose: String = String(vs[2]) if use_old else a.purpose
+		var level: int = int(vs[3]) if use_old else a.level
+		var gear: int = int(vs[4]) if use_old else a.gear
 		match a.kind:
 			"collector":
 				draw_circle(c, 5.0, Color(0.35, 0.25, 0.15))
-				if a.pouch > 0:
+				if pouch > 0:
 					draw_circle(c + Vector2(5.0, -5.0), 2.5, Color(0.92, 0.78, 0.2))
 			"goblin":
 				# Sickly lime with a dark rim: readable against both open
@@ -972,9 +987,9 @@ func _draw_agents() -> void:
 				draw_circle(c, 4.5, Color(0.64, 0.76, 0.28))
 				draw_circle(c + Vector2(1.5, -1.0), 1.0, Color(0.9, 0.2, 0.1))
 				draw_circle(c + Vector2(-1.5, -1.0), 1.0, Color(0.9, 0.2, 0.1))
-				if a.carrying > 0:
+				if carrying > 0:
 					# Foraged provisions (green) or plundered gold.
-					var loot_col := Color(0.5, 0.7, 0.3) if a.purpose == "forage" \
+					var loot_col := Color(0.5, 0.7, 0.3) if purpose == "forage" \
 						else Color(0.92, 0.78, 0.2)
 					draw_circle(c + Vector2(5.0, -4.0), 2.5, loot_col)
 			"bandit":
@@ -984,7 +999,7 @@ func _draw_agents() -> void:
 				draw_circle(c, 4.3, Color(0.56, 0.36, 0.22))
 				draw_line(c + Vector2(-3.5, -2.0), c + Vector2(3.5, -2.0),
 					Color(0.15, 0.1, 0.08), 2.0)
-				if a.carrying > 0:
+				if carrying > 0:
 					draw_circle(c + Vector2(5.0, -4.0), 2.5, Color(0.92, 0.78, 0.2))
 			"guard":
 				draw_circle(c, 4.5, Color(0.45, 0.55, 0.7))
@@ -1023,22 +1038,22 @@ func _draw_agents() -> void:
 					"rabbit":
 						draw_circle(c + Vector2(1.5, -4.0), 1.2, col)
 						draw_circle(c + Vector2(-1.5, -4.0), 1.2, col)
-				if a.carrying > 0:
+				if carrying > 0:
 					draw_circle(c + Vector2(5.0, -4.0), 2.5, Color(0.7, 0.75, 0.45))
 			"hero":
 				# Class-colored figure with a sword and level pips overhead.
 				draw_circle(c, 5.0, HERO_COLORS.get(a.hero_class, Color(0.8, 0.8, 0.8)))
 				draw_line(c + Vector2(3, 2), c + Vector2(-3, -6), Color(0.9, 0.9, 0.95), 1.5)
-				if a.pouch > 0:
+				if pouch > 0:
 					draw_circle(c + Vector2(5.0, -5.0), 2.5, GOLD)
-				for i in clampi(a.level, 0, 5):
+				for i in clampi(level, 0, 5):
 					draw_circle(c + Vector2(-6 + i * 4, -9), 1.5, GOLD)
-				for i in clampi(int(a.gear), 0, 4):
+				for i in clampi(gear, 0, 4):
 					draw_circle(c + Vector2(-6 + i * 4, -13), 1.5,
 						Color(0.72, 0.8, 0.9))
 			_:
 				draw_circle(c, 4.0, Color(0.85, 0.72, 0.55))
-				if a.carrying > 0:
+				if carrying > 0:
 					draw_circle(c + Vector2(0.0, -7.0), 3.0, Color(0.5, 0.7, 0.3))
-				elif a.purpose == "build":
+				elif purpose == "build":
 					draw_circle(c + Vector2(0.0, -7.0), 3.0, Color(0.85, 0.65, 0.2))

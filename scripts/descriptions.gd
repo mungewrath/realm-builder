@@ -583,6 +583,8 @@ static func agent_activity(a) -> String:
 						"assist":
 							return "off to lend a hand"
 						"explore":
+							if a.goal == "explore_bounty":
+								return "heading for a posted explore flag"
 							return "venturing into the unknown"
 						"protect":
 							return "walking out to tend the wilds"
@@ -616,6 +618,8 @@ static func agent_activity(a) -> String:
 							return "tending the land and its creatures"
 						"hunt":
 							return "hunting game in the brush"
+						"intercept":
+							return "standing their ground"
 						_:
 							return "about their business"
 		"collector":
