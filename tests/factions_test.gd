@@ -190,13 +190,32 @@ func _test_gnome_trade() -> void:
 
 func _test_feud() -> void:
 	# Once the ledger passes the threshold, kobold warbands fall on the
-	# enclave and carry off its coin.
+	# enclave and carry off its coin. Isolate one contested pair: a scaled
+	# map holds many burrows and enclaves, and any of them may strike.
 	var sim = _make_sim(411)
+	var kbs := _dens_of_kind(sim, "kobold_den")
 	var gns := _dens_of_kind(sim, "gnome_enclave")
-	if gns.is_empty():
-		_fail("no enclave to feud with")
+	if kbs.is_empty() or gns.is_empty():
+		_fail("no feud pair to test")
 		return
-	var gn: Vector2i = gns[0]
+	var gn := Vector2i(-1, -1)
+	var burrow := Vector2i(-1, -1)
+	for p in kbs:
+		var e: Vector2i = sim._nearest_den_of_kind("gnome_enclave", p)
+		if e.x >= 0 and Vector2(e).distance_squared_to(Vector2(p)) \
+				<= sim.den_claim_radius * sim.den_claim_radius:
+			gn = e
+			burrow = p
+			break
+	if gn.x < 0:
+		_fail("no contested feud pair")
+		return
+	for p in kbs:
+		if p != burrow:
+			sim.dens.erase(p)
+	for p in gns:
+		if p != gn:
+			sim.dens.erase(p)
 	sim.dens[gn].gold = 6
 	_set_tension(sim, "kobolds", "gnomes", -2)
 	sim.tension_decay_ticks = 100000
@@ -220,7 +239,8 @@ func _test_feud_thaw() -> void:
 		_fail("feud pairs missing for the thaw test")
 		return
 	_set_tension(sim, "kobolds", "gnomes", -3)
-	sim._clear_den(kbs[0])
+	for p in kbs:
+		sim._clear_den(p)
 	if sim.tension_between("kobolds", "gnomes") != 0:
 		_fail("feud did not thaw after the kobolds were wiped out")
 	sim.gnome_trade_ticks = 1
@@ -390,5 +410,7 @@ func _test_long_run() -> void:
 			_fail("bad agent state: %s" % a.state)
 		if a.kind == "bandit" and not sim.dens.has(a.home):
 			_fail("bandit homed to a vanished camp")
-	if _count(sim, "bandit") > 40:
-		_fail("bandit population ran away: %d" % _count(sim, "bandit"))
+	var bandit_camps := _dens_of_kind(sim, "bandit_camp").size()
+	if _count(sim, "bandit") > maxi(40, bandit_camps * 4):
+		_fail("bandit population ran away: %d (%d camps)" \
+			% [_count(sim, "bandit"), bandit_camps])

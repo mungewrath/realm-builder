@@ -1,4 +1,10 @@
 const AgentC = preload("res://scripts/agents.gd")
+const WorldC = preload("res://scripts/world.gd")
+
+# The wilderness is a scaled-up realm. Lair and creature counts follow the
+# map's area so its denizens stay as dense as they were in the original world.
+const LAIR_DENSITY_EXPONENT := 1.5
+const MAP_AREA_SCALE := pow(WorldC.MAP_SCALE, LAIR_DENSITY_EXPONENT)
 
 const FARM_COST := 10
 const HOUSE_COST := 15
@@ -45,7 +51,7 @@ const GOBLIN_RAZE_TICKS := 6
 const FARM_PLUNDER := 6
 const HOUSE_PLUNDER := 8
 const DEN_MAX_LEVEL := 3
-const DEN_SEED_COUNT := 3
+const DEN_SEED_COUNT := 3 * MAP_AREA_SCALE
 
 # Goblin behavior tuning (all overridable vars for tests/tuning).
 const MIN_WARBAND := 2
@@ -328,6 +334,8 @@ var last_event: String = "":
 			if event_log.size() > EVENT_LOG_MAX:
 				event_log.pop_front()
 var world
+var _edge_cache := []
+var _edge_cache_version := -1
 var buildings := {}
 var building_padding := true
 var building_footprints := true
@@ -362,11 +370,11 @@ var keep_trickle_ticks := 60
 # tests (and later tuning) can adjust them without touching constants.
 var dens := {} # tile -> {level, hp, food, gold, intent, intent_left, next_muster}
 var raids_enabled := true
-var den_raid_rest := 80
-var den_muster_ticks := 30
+var den_raid_rest := 120
+var den_muster_ticks := 60
 var guard_retrain_ticks := 600
 var den_intent_weights := {} # optional override; empty = hunger-driven
-var dens_max := 5
+var dens_max := 5 * MAP_AREA_SCALE
 var den_respawn_rest := 220
 var den_respawn_rest_left := 0
 var dens_spawned := 0
@@ -538,7 +546,7 @@ const PREDATOR_STARVING_FOOD := 2
 # Wild ecology: toggle, caps, and pacing. Existing exact-accounting suites
 # run with `wild_ecology` off, same pattern as fog and the gold trickle.
 var wild_ecology := true
-var wild_dens_max := 16
+var wild_dens_max := 16 * MAP_AREA_SCALE
 var wild_spawn_chance := 0.55
 var wild_spawn_weights := {
 	"rabbit_warren": 22, "wolf_den": 17, "spider_den": 14,
@@ -1634,10 +1642,10 @@ func _gnome_tribute_active() -> bool:
 	return false
 
 func _gnome_warded_pair(a: String, b: String) -> bool:
-	if not _gnome_tribute_active():
+	if not ((a == "kobolds" and b == "gnomes") \
+			or (a == "gnomes" and b == "kobolds")):
 		return false
-	return (a == "kobolds" and b == "gnomes") \
-		or (a == "gnomes" and b == "kobolds")
+	return _gnome_tribute_active()
 
 func _nearest_cursed_farm(from: Vector2i) -> Vector2i:
 	var best := Vector2i(-1, -1)
@@ -1773,21 +1781,30 @@ func _nearest_free_farm(from: Vector2i) -> Vector2i:
 # --- M3: goblins & guards --------------------------------------------------
 
 func _spawn_dens() -> void:
-	# Dens squat far from the keep, on mountain edges whose doorstep is
-	# actually connected to the realm — no sealed pockets.
-	var sites: Array = world.mountain_edge_sites()
-	var reachable: Array = []
-	for s in sites:
-		if not find_path(den_doorstep(s, keep_pos), keep_pos).is_empty():
-			reachable.append(s)
-	reachable.sort_custom(func(a, b):
-		return Vector2(a).distance_squared_to(Vector2(keep_pos)) \
-			> Vector2(b).distance_squared_to(Vector2(keep_pos)))
-	var pool: Array = reachable.slice(0, mini(8, reachable.size()))
+	# Dens squat on mountain edges whose doorstep is actually connected to
+	# the realm — no sealed pockets. Distance is a soft preference rather
+	# than a hard cut: closer edges are somewhat more likely, but the whole
+	# reachable ring stays in play.
+	var pool: Array = _mountain_edge_pool()
 	for i in DEN_SEED_COUNT:
 		if pool.is_empty():
 			break
-		var idx := rng.randi_range(0, pool.size() - 1)
+		# Weighted draw: mild proximity bias, long tail.
+		var weights := []
+		var total := 0.0
+		for q in pool:
+			var dist := Vector2(q).distance_to(Vector2(keep_pos))
+			var w := 1.0 / (dist + 80.0)
+			weights.append(w)
+			total += w
+		var roll := rng.randf() * total
+		var acc := 0.0
+		var idx := 0
+		for j in weights.size():
+			acc += weights[j]
+			if roll <= acc:
+				idx = j
+				break
 		var p: Vector2i = pool.pop_at(idx)
 		dens[p] = {
 			"kind": "goblin_den",
@@ -1805,10 +1822,10 @@ func _spawn_dens() -> void:
 func _den_respawn_tick() -> void:
 	# Goblin lairs refill on their own clock; other dens (wild ecology) do
 	# not crowd them out of the cap.
-	if _count_goblin_dens() >= dens_max:
-		return
 	if den_respawn_rest_left > 0:
 		den_respawn_rest_left -= 1
+		return
+	if _count_goblin_dens() >= dens_max:
 		return
 	if not _try_spawn_den():
 		# No suitable lair right now: look again soon, without spinning.
@@ -1834,14 +1851,19 @@ func _try_spawn_den() -> bool:
 	# wilder ground (deep forest nearby) is the likeliest cradle.
 	if rng.randf() > DEN_SPAWN_CHANCE:
 		return false
+	var edges := _reachable_mountain_edges()
+	if edges.is_empty():
+		return false
 	var candidates := []
-	for s in world.mountain_edge_sites():
+	# Sample the shoulders rather than scanning every one: the wild only
+	# needs a fair site, and a big map can offer hundreds of edges.
+	for _i in mini(edges.size(), 32):
+		var entry: Array = edges[rng.randi_range(0, edges.size() - 1)]
+		var s: Vector2i = entry[0]
+		var door: Vector2i = entry[1]
 		if dens.has(s):
 			continue
-		var door := den_doorstep(s, keep_pos)
 		if Vector2(door).distance_to(Vector2(keep_pos)) < DEN_WILD_MIN:
-			continue
-		if find_path(door, keep_pos).is_empty():
 			continue
 		var near_civ := false
 		for p in buildings:
@@ -1904,16 +1926,34 @@ func _dens_tick() -> void:
 	# The den is the warband orchestrator: it musters goblins over time and
 	# periodically imposes a weighted-random mood on whoever is home. Wild
 	# dens (ecology) run their own simpler machine in `_wild_dens_tick`.
+	# Index the idle goblins once so a full wilderness does not rescan every
+	# agent for every den.
+	var idle_by_home := {}
+	var idle_goblins := []
+	var goblin_count_by_home := {}
+	for a in agents:
+		if a.kind == "goblin":
+			goblin_count_by_home[a.home] = int(goblin_count_by_home.get(a.home, 0)) + 1
+		if a.kind == "goblin" and a.state == AgentC.IDLE and not a.fighting:
+			if not idle_by_home.has(a.home):
+				idle_by_home[a.home] = []
+			idle_by_home[a.home].append(a)
+			idle_goblins.append(a)
+	var mustering := {}
 	for p in dens:
 		var den: Dictionary = dens[p]
 		if den.get("kind", "goblin_den") != "goblin_den":
 			continue
-		_den_muster(p, den)
+		if int(den.next_muster) > 0:
+			den.next_muster = int(den.next_muster) - 1
+		else:
+			_den_muster(p, den, int(goblin_count_by_home.get(p, 0)))
+		var idle: Array = idle_by_home.get(p, [])
 		if den.intent == "muster":
 			# Gathering a warband: hold the home goblins and watch for quorum.
-			if _idle_goblins_at(p).size() >= MIN_WARBAND \
+			if idle.size() >= MIN_WARBAND \
 					and _nearest_raid_target(p).x >= 0:
-				_launch_raid(p)
+				_launch_raid(p, idle)
 			else:
 				den.intent_left = int(den.intent_left) - 1
 				if int(den.intent_left) <= 0:
@@ -1922,9 +1962,11 @@ func _dens_tick() -> void:
 		elif int(den.intent_left) > 0:
 			den.intent_left = int(den.intent_left) - 1
 		else:
-			_den_pick_mood(p, den)
+			_den_pick_mood(p, den, idle)
+		if den.intent == "muster":
+			mustering[p] = true
 	_den_respawn_tick()
-	_goblin_tick()
+	_goblin_tick(idle_goblins, mustering)
 
 func _den_mood_weights(den: Dictionary) -> Dictionary:
 	# Hunger drives the mood: a den low on provisions gets restless — it
@@ -1934,18 +1976,14 @@ func _den_mood_weights(den: Dictionary) -> Dictionary:
 		"lurk": 25,
 		"prowl": 20,
 		"forage": 25 if hungry else 15,
-		"raid": 45 if hungry else 20,
+		"raid": 4 if hungry else 1,
 	}
 
-func _den_muster(p: Vector2i, den: Dictionary) -> void:
+func _den_muster(p: Vector2i, den: Dictionary, pop: int) -> void:
 	den.next_muster = int(den.next_muster) - 1
 	if int(den.next_muster) > 0:
 		return
 	den.next_muster = den_muster_ticks
-	var pop := 0
-	for a in agents:
-		if a.kind == "goblin" and a.home == p:
-			pop += 1
 	if pop >= 2 + int(den.level):
 		return
 	if pop == 0:
@@ -1958,7 +1996,7 @@ func _den_muster(p: Vector2i, den: Dictionary) -> void:
 	den.food = int(den.food) - MUSTER_FOOD_COST
 	_spawn_goblin(p)
 
-func _den_pick_mood(p: Vector2i, den: Dictionary) -> void:
+func _den_pick_mood(p: Vector2i, den: Dictionary, idle: Array) -> void:
 	var weights: Dictionary = den_intent_weights \
 		if not den_intent_weights.is_empty() else _den_mood_weights(den)
 	var roll := _weighted_intent(weights)
@@ -1970,25 +2008,24 @@ func _den_pick_mood(p: Vector2i, den: Dictionary) -> void:
 		"prowl":
 			den.intent = "prowl"
 			den.intent_left = 30 + rng.randi_range(0, 30)
-			_warband_behave(p, AgentC.PROWL)
+			_warband_behave(AgentC.PROWL, idle)
 		"forage":
 			den.intent = "forage"
 			den.intent_left = 30 + rng.randi_range(0, 30)
-			_warband_behave(p, AgentC.FORAGE)
+			_warband_behave(AgentC.FORAGE, idle)
 		"raid":
-			var idle := _idle_goblins_at(p)
 			if idle.size() < MIN_WARBAND:
 				# Too few raiders home: call them in and hold a muster until
 				# the warband is ready (or the patience runs out).
 				den.intent = "muster"
 				den.intent_left = 30 + rng.randi_range(0, 30)
-				_warband_behave(p, AgentC.LURK)
+				_warband_behave(AgentC.LURK, idle)
 			elif _nearest_raid_target(p).x < 0:
 				# Nothing worth burning yet: rest a little and re-roll.
 				den.intent = "lurk"
 				den.intent_left = 20
 			else:
-				_launch_raid(p)
+				_launch_raid(p, idle)
 
 func _weighted_intent(weights: Dictionary) -> String:
 	var total := 0
@@ -2011,38 +2048,30 @@ func _idle_goblins_at(den_pos: Vector2i) -> Array:
 			idle.append(a)
 	return idle
 
-func _warband_behave(den_pos: Vector2i, mood: String) -> void:
+func _warband_behave(mood: String, idle: Array) -> void:
 	# The den's mood sweeps up every idle goblin — whether that is a raiding
 	# party or a lazy afternoon depends on the roll.
-	for a in agents:
-		if a.kind == "goblin" and a.home == den_pos and a.state == AgentC.IDLE \
-				and not a.fighting:
-			_goblin_behave(a, mood)
+	for a in idle:
+		_goblin_behave(a, mood)
 
-func _launch_raid(den_pos: Vector2i) -> void:
+func _launch_raid(den_pos: Vector2i, idle: Array) -> void:
 	var den: Dictionary = dens[den_pos]
 	var target := _nearest_raid_target(den_pos)
-	for a in agents:
-		if a.kind == "goblin" and a.home == den_pos and a.state == AgentC.IDLE \
-				and not a.fighting:
-			a.assign(target, AgentC.RAID)
-			a.behavior_left = 0
+	for a in idle:
+		a.assign(target, AgentC.RAID)
+		a.behavior_left = 0
 	den.intent = "rest"
 	den.intent_left = den_raid_rest
 	raids_launched += 1
 	last_event = "A goblin warband marches out of the wild!"
 	warn_threat(target, 10.0)
 
-func _goblin_tick() -> void:
+func _goblin_tick(idle_goblins: Array, mustering: Dictionary) -> void:
 	# Personal behavior layer: every idle goblin runs weighted-random states
 	# (lurk / wander / prowl / forage) that persist for a state-dependent
 	# stretch; combat interrupts them and they hold ground until it passes.
-	for a in agents:
-		if a.kind != "goblin":
-			continue
-		if a.fighting:
-			continue
-		if a.state != AgentC.IDLE:
+	for a in idle_goblins:
+		if a.fighting or a.state != AgentC.IDLE:
 			continue
 		# Wounded goblins convalesce slowly at the den.
 		if a.adjacent_to(a.home) and a.hp < a.max_hp:
@@ -2051,8 +2080,7 @@ func _goblin_tick() -> void:
 				a.heal_cd = DEN_HEAL_TICKS
 				a.hp = mini(a.hp + 1, a.max_hp)
 		# A den gathering a warband holds its goblins at home.
-		var den: Dictionary = dens.get(a.home, {})
-		if den.get("intent", "") == "muster":
+		if mustering.has(a.home):
 			continue
 		if a.behavior_left > 0:
 			a.behavior_left -= 1
@@ -2107,17 +2135,13 @@ func _toward_spot(from: Vector2i, farm: Vector2i) -> Vector2i:
 
 func _forage_spot(den_pos: Vector2i) -> Vector2i:
 	# Berries and grubs: prefer forest near the den, settle for any open
-	# ground near it.
-	var best := Vector2i(-1, -1)
-	var pool := []
-	for dy in range(-10, 11):
-		for dx in range(-10, 11):
-			var p: Vector2i = den_pos + Vector2i(dx, dy)
-			if world.in_bounds(p) and world.get_terrain(p) == world.FOREST \
-					and building_origin_at(p).x < 0:
-				pool.append(p)
-	if not pool.is_empty():
-		return pool[rng.randi_range(0, pool.size() - 1)]
+	# ground near it. Sample rather than sweep — a big map has plenty.
+	for i in 20:
+		var p: Vector2i = den_pos + Vector2i(
+			rng.randi_range(-10, 10), rng.randi_range(-10, 10))
+		if world.in_bounds(p) and world.get_terrain(p) == world.FOREST \
+				and building_origin_at(p).x < 0:
+			return p
 	return _wilds_spot(den_pos, 8, den_pos)
 
 func _open_ground(p: Vector2i) -> bool:
@@ -2399,18 +2423,31 @@ func _wild_den_site(kind_key: String, near := Vector2i(-99, -99), near_r := 0,
 		return best
 	return pool[rng.randi_range(0, pool.size() - 1)]
 
+func _reachable_mountain_edges() -> Array:
+	# Mountain shoulders with a walkable doorstep and a real route to the
+	# realm. Reachability only changes when terrain changes, so cache it.
+	if _edge_cache_version == world.version:
+		return _edge_cache
+	_edge_cache = []
+	for s in world.mountain_edge_sites():
+		var door := den_doorstep(s, keep_pos)
+		if find_path(door, keep_pos).is_empty():
+			continue
+		_edge_cache.append([s, door])
+	_edge_cache_version = world.version
+	return _edge_cache
+
 func _mountain_edge_pool(clearance := DEN_CIV_CLEARANCE,
 		min_keep := DEN_WILD_MIN) -> Array:
 	# Reachable mountain shoulders the realm could actually march on — the
 	# ground kobolds, gnomes and other hillfolk squat.
 	var pool := []
-	for s in world.mountain_edge_sites():
+	for entry in _reachable_mountain_edges():
+		var s: Vector2i = entry[0]
+		var door: Vector2i = entry[1]
 		if dens.has(s) or building_origin_at(s).x >= 0:
 			continue
-		var door := den_doorstep(s, keep_pos)
 		if Vector2(door).distance_to(Vector2(keep_pos)) < min_keep:
-			continue
-		if find_path(door, keep_pos).is_empty():
 			continue
 		var near_civ := false
 		for b in buildings:
@@ -2436,65 +2473,152 @@ func _mountain_edge_site(near := Vector2i(-99, -99), near_r := 0,
 	return pool[rng.randi_range(0, pool.size() - 1)]
 
 func _seed_wild_dens() -> void:
+	# Seed enough lairs to fill the map at its original density, then let the
+	# ecology's own regrowth top it up from there. Candidate sites are pooled
+	# once so filling a large map does not rescan every tile for every lair.
+	var pools := _wild_seed_pools()
+	for _round in MAP_AREA_SCALE:
+		_seed_wild_round(pools)
+	wild_respawn_rest_left = wild_den_rest + rng.randi_range(0, 120)
+
+func _wild_seed_pools() -> Dictionary:
+	var pools := {"grass": [], "forest": [], "swamp": [], "mountain": []}
+	for y in world.SIZE_Y:
+		for x in world.SIZE_X:
+			var p := Vector2i(x, y)
+			var t: int = world.get_terrain(p)
+			var key := ""
+			if t == world.GRASS:
+				key = "grass"
+			elif t == world.FOREST:
+				key = "forest"
+			elif t == world.SWAMP:
+				key = "swamp"
+			else:
+				continue
+			if dens.has(p) or building_origin_at(p).x >= 0 or terrain_works.has(p):
+				continue
+			pools[key].append(p)
+	for entry in _reachable_mountain_edges():
+		var s: Vector2i = entry[0]
+		if dens.has(s) or building_origin_at(s).x >= 0:
+			continue
+		pools["mountain"].append(s)
+	return pools
+
+func _pop_seed_site(pools: Dictionary, key: String, near := Vector2i(-99, -99),
+		near_r := 0, clearance := DEN_CIV_CLEARANCE,
+		min_keep := DEN_WILD_MIN, proximity_bias := 0.0) -> Vector2i:
+	var pool: Array = pools.get(key, [])
+	if pool.is_empty():
+		return Vector2i(-1, -1)
+	# Collect every valid candidate first, so a proximity bias can weight
+	# the draw instead of hard-cutting the map into near/far bands.
+	var candidates := []
+	for idx in pool.size():
+		var p: Vector2i = pool[idx]
+		if dens.has(p):
+			continue
+		var probe := p
+		if key == "mountain":
+			probe = den_doorstep(p, keep_pos)
+		if near_r > 0:
+			if Vector2(p).distance_to(Vector2(near)) > near_r:
+				continue
+		if Vector2(probe).distance_to(Vector2(keep_pos)) < min_keep:
+			continue
+		var near_civ := false
+		for b in buildings:
+			if Vector2(b).distance_to(Vector2(probe)) < clearance:
+				near_civ = true
+				break
+		if near_civ:
+			continue
+		candidates.append([idx, p])
+	if candidates.is_empty():
+		return Vector2i(-1, -1)
+	var pick_idx := 0
+	if proximity_bias > 0.0:
+		# Weighted draw: closer sites are somewhat more likely, but the
+		# long tail keeps far sites in play.
+		var weights := []
+		var total := 0.0
+		for c in candidates:
+			var p: Vector2i = c[1]
+			var probe := p
+			if key == "mountain":
+				probe = den_doorstep(p, keep_pos)
+			var dist := Vector2(probe).distance_to(Vector2(keep_pos))
+			var w := 1.0 / (dist + proximity_bias)
+			weights.append(w)
+			total += w
+		var roll := rng.randf() * total
+		var acc := 0.0
+		for i in weights.size():
+			acc += weights[i]
+			if roll <= acc:
+				pick_idx = i
+				break
+	else:
+		pick_idx = rng.randi_range(0, candidates.size() - 1)
+	var chosen: Array = candidates[pick_idx]
+	pool.remove_at(int(chosen[0]))
+	return chosen[1]
+
+func _seed_wild_round(pools: Dictionary) -> void:
 	# The starting wilds hold prey and a predator: a warren to graze and a
 	# wolf pack to stalk it. Spiders arrive only with the regrowth. Some
 	# worlds have no deep forest; the seed falls back to shallower ground
 	# rather than leaving the wilds empty.
-	var warren := _wild_den_site("rabbit_warren")
+	var warren := _pop_seed_site(pools, "grass")
 	if warren.x < 0:
-		warren = _wild_den_site("rabbit_warren", Vector2i(-99, -99), 0, 4, 8)
+		warren = _pop_seed_site(pools, "grass", Vector2i(-99, -99), 0, 4, 8)
 	if warren.x >= 0:
 		_place_wild_den("rabbit_warren", warren)
-	var woods := _wild_den_site("wolf_den")
+	var woods := _pop_seed_site(pools, "forest")
 	if woods.x < 0:
-		woods = _wild_den_site("wolf_den", Vector2i(-99, -99), 0, 4, 8)
+		woods = _pop_seed_site(pools, "forest", Vector2i(-99, -99), 0, 4, 8)
 	if woods.x >= 0:
 		_place_wild_den("wolf_den", woods)
 	# Marshes: a frog pond and the owlbear that stalks it. Draining the bog
 	# unwinds the chain — frogs lose their ground, the owlbear loses its
 	# frogs and ranges toward the farms.
-	var pond := _wild_den_site("frog_den")
+	var pond := _pop_seed_site(pools, "swamp")
 	if pond.x < 0:
-		pond = _wild_den_site("frog_den", Vector2i(-99, -99), 0, 4, 8)
+		pond = _pop_seed_site(pools, "swamp", Vector2i(-99, -99), 0, 4, 8)
 	if pond.x >= 0:
 		_place_wild_den("frog_den", pond)
-		var screech := _wild_den_site("owlbear_den", pond, 8)
+		var screech := _pop_seed_site(pools, "forest", pond, 8)
 		if screech.x < 0:
-			screech = _wild_den_site("owlbear_den")
+			screech = _pop_seed_site(pools, "forest")
 		if screech.x >= 0:
 			_place_wild_den("owlbear_den", screech)
-	# The old feud: a kobold burrow and a gnome enclave squat the closest
-	# pair of hill shoulders — claims nearly overlapping from the start, so
-	# the tension ledger has something to grind on. If the hills offer only
-	# one shoulder, the feud waits for a spawn.
-	var edges := _mountain_edge_pool()
-	var kb := Vector2i(-1, -1)
-	var gn := Vector2i(-1, -1)
-	var best_d := INF
-	for i in edges.size():
-		for j in range(i + 1, edges.size()):
-			var d := Vector2(edges[i]).distance_squared_to(Vector2(edges[j]))
-			if d < best_d:
-				best_d = d
-				kb = edges[i]
-				gn = edges[j]
+	# The old feud: a kobold burrow and a gnome enclave squat neighbouring
+	# hill shoulders — claims nearly overlapping from the start, so the
+	# tension ledger has something to grind on.
+	var kb := _pop_seed_site(pools, "mountain", keep_pos, 0, DEN_CIV_CLEARANCE, DEN_WILD_MIN, 80.0)
 	if kb.x >= 0:
-		_place_wild_den("kobold_den", kb)
-		_place_wild_den("gnome_enclave", gn)
+		var gn := _pop_seed_site(pools, "mountain", kb, den_claim_radius)
+		if gn.x < 0:
+			gn = _pop_seed_site(pools, "mountain")
+		if gn.x >= 0:
+			_place_wild_den("kobold_den", kb)
+			_place_wild_den("gnome_enclave", gn)
+		else:
+			pools["mountain"].append(kb)
 	# Roads are dangerous: a bandit camp squats the nearer wilds, and a coven
 	# haunts the woods closest to the settled fields — both within striking
 	# distance of the realm's traffic from the first day.
-	var camp := _wild_den_site("bandit_camp", keep_pos, 24, DEN_CIV_CLEARANCE, 10)
+	var camp := _pop_seed_site(pools, "grass", keep_pos, 0, DEN_CIV_CLEARANCE, 10, 60.0)
 	if camp.x < 0:
-		camp = _wild_den_site("bandit_camp")
+		camp = _pop_seed_site(pools, "grass")
 	if camp.x >= 0:
 		_place_wild_den("bandit_camp", camp)
-	var coven := _wild_den_site("hag_coven", keep_pos, 40)
+	var coven := _pop_seed_site(pools, "forest", keep_pos, 40)
 	if coven.x < 0:
-		coven = _wild_den_site("hag_coven")
+		coven = _pop_seed_site(pools, "forest")
 	if coven.x >= 0:
 		_place_wild_den("hag_coven", coven)
-	wild_respawn_rest_left = wild_den_rest + rng.randi_range(0, 120)
 
 func _place_wild_den(kind_key: String, p: Vector2i, food := WILD_DEN_FOOD_START) -> void:
 	dens[p] = {
@@ -2520,10 +2644,10 @@ func _place_wild_den(kind_key: String, p: Vector2i, food := WILD_DEN_FOOD_START)
 		last_event = DEN_KINDS[kind_key].spies_as
 
 func _wild_respawn_tick() -> void:
-	if _count_wild_dens() >= wild_dens_max:
-		return
 	if wild_respawn_rest_left > 0:
 		wild_respawn_rest_left -= 1
+		return
+	if _count_wild_dens() >= wild_dens_max:
 		return
 	if not _try_spawn_wild_den():
 		wild_respawn_rest_left = 30 + rng.randi_range(0, 60)
@@ -2584,9 +2708,21 @@ func _wild_dens_tick() -> void:
 			continue
 		var fed: bool = int(den.food) > 0
 		# Some lairs also need the land itself: a drained marsh drowns the
-		# frogs as surely as an empty larder.
-		if row.has("habitat") and not _habitat_ok(p, row.habitat):
-			fed = false
+		# frogs as surely as an empty larder. Checked on a short stagger so
+		# a full wilderness does not scan every claim every tick.
+		if fed and row.has("habitat"):
+			# Terrain changes invalidate the cached verdict at once; between
+			# changes the claim is only re-scanned on a short stagger.
+			if int(den.get("habitat_version", -1)) != world.version:
+				den.habitat_version = world.version
+				den.land_ok = _habitat_ok(p, row.habitat)
+			else:
+				var check_in := int(den.get("habitat_check", 0)) - 1
+				if check_in <= 0:
+					den.habitat_check = 2
+					den.land_ok = _habitat_ok(p, row.habitat)
+			if not bool(den.get("land_ok", true)):
+				fed = false
 		if fed:
 			den.unmet = 0
 			continue
@@ -2609,12 +2745,16 @@ func _habitat_ok(p: Vector2i, habitat: Dictionary) -> bool:
 		want = world.GRASS
 	var r: int = int(habitat.get("radius", den_claim_radius))
 	var n := 0
+	var tiles: PackedByteArray = world.tiles
+	var sx: int = world.SIZE_X
+	var sy: int = world.SIZE_Y
 	for dy in range(-r, r + 1):
 		for dx in range(-r, r + 1):
 			if dx * dx + dy * dy > r * r:
 				continue
 			var q := p + Vector2i(dx, dy)
-			if world != null and world.get_terrain(q) == want:
+			if q.x >= 0 and q.y >= 0 and q.x < sx and q.y < sy \
+					and tiles[q.y * sx + q.x] == want:
 				n += 1
 	return n >= int(habitat.get("min", 1))
 
@@ -2726,13 +2866,17 @@ func hunt_strike(p: Vector2i, hunter) -> void:
 	hunter.loot_kind = "food"
 
 func _wild_creatures_tick() -> void:
+	# Beasts idle on alternating ticks; their state clocks still count real
+	# ticks, so the wilderness stays lively without scanning twice as often.
+	if tick % 2 != 0:
+		return
 	for a in agents:
 		if a.kind != "creature":
 			continue
 		if a.state != AgentC.IDLE:
 			continue
 		if a.behavior_left > 0:
-			a.behavior_left -= 1
+			a.behavior_left -= 2
 			continue
 		_roll_creature_behavior(a)
 
@@ -2781,15 +2925,12 @@ func _roll_creature_behavior(a) -> void:
 
 func _graze_spot(den_pos: Vector2i) -> Vector2i:
 	# Meadow browse: prefer open grass near the den, settle for any open
-	# ground around it.
-	var pool := []
-	for dy in range(-8, 9):
-		for dx in range(-8, 9):
-			var p: Vector2i = den_pos + Vector2i(dx, dy)
-			if _open_ground(p) and world.get_terrain(p) == world.GRASS:
-				pool.append(p)
-	if not pool.is_empty():
-		return pool[rng.randi_range(0, pool.size() - 1)]
+	# ground around it. Sample rather than sweep — a big map has plenty.
+	for i in 16:
+		var p: Vector2i = den_pos + Vector2i(
+			rng.randi_range(-8, 8), rng.randi_range(-8, 8))
+		if _open_ground(p) and world.get_terrain(p) == world.GRASS:
+			return p
 	return _wilds_spot(den_pos, 6, den_pos)
 
 func _spawn_creature(species_name: String, den_pos: Vector2i) -> void:
@@ -2848,6 +2989,7 @@ func _claim_friction_tick() -> void:
 		return
 	_claim_left = claim_friction_ticks
 	var tiles: Array = dens.keys()
+	var gnome_truce := _gnome_tribute_active()
 	for i in tiles.size():
 		var p: Vector2i = tiles[i]
 		var f1: String = DEN_KINDS[dens[p].get("kind", "goblin_den")].faction
@@ -2858,7 +3000,8 @@ func _claim_friction_tick() -> void:
 			var f2: String = DEN_KINDS[dens[q].get("kind", "goblin_den")].faction
 			if f1 == f2 or f2 == "wilders":
 				continue
-			if _gnome_warded_pair(f1, f2):
+			if gnome_truce and ((f1 == "kobolds" and f2 == "gnomes") \
+					or (f1 == "gnomes" and f2 == "kobolds")):
 				continue # tribute keeps the hill feud off the ledger
 			if Vector2(p).distance_squared_to(Vector2(q)) \
 					> den_claim_radius * den_claim_radius:
@@ -3014,6 +3157,10 @@ func _bandit_tick() -> void:
 				pop += 1
 		if pop < 2 + int(den.level):
 			_spawn_bandit(p)
+	var purses := []
+	for a in agents:
+		if (a.kind == "collector" or a.kind == "hero") and int(a.pouch) > 0:
+			purses.append(a)
 	for a in agents:
 		if a.kind != "bandit" or a.fighting:
 			continue
@@ -3046,7 +3193,10 @@ func _bandit_tick() -> void:
 			if a.heal_cd <= 0:
 				a.heal_cd = DEN_HEAL_TICKS
 				a.hp = mini(a.hp + 1, a.max_hp)
-		var victim = _pick_mug_victim(a)
+		if int(a.behavior_left) > 0:
+			a.behavior_left -= 1
+			continue
+		var victim = _pick_mug_victim(a, purses)
 		if victim != null:
 			a.chase(victim)
 			a.purpose = AgentC.MUG
@@ -3054,14 +3204,14 @@ func _bandit_tick() -> void:
 		a.assign(_wilds_spot(a.home, 5, a.tile()), AgentC.WANDER)
 		a.behavior_left = 30
 
-func _pick_mug_victim(bandit):
+func _pick_mug_victim(bandit, purses: Array):
 	# Tax collectors first: soft targets with full purses. A hero on the
 	# road is a fallback — and one who may well turn the ambush around.
 	var best = null
 	var best_d := INF
 	var reach_sq: int = bandit_reach * bandit_reach
-	for a in agents:
-		if a.kind != "collector" or int(a.pouch) <= 0:
+	for a in purses:
+		if a.kind != "collector":
 			continue
 		var d := Vector2(a.tile()).distance_squared_to(Vector2(bandit.home))
 		if d > reach_sq or d >= best_d:
@@ -3070,8 +3220,8 @@ func _pick_mug_victim(bandit):
 		best = a
 	if best != null:
 		return best
-	for a in agents:
-		if a.kind != "hero" or int(a.pouch) <= 0:
+	for a in purses:
+		if a.kind != "hero":
 			continue
 		var d := Vector2(a.tile()).distance_squared_to(Vector2(bandit.home))
 		if d > reach_sq or d >= best_d:
@@ -3692,6 +3842,10 @@ func _hero_aggro_tick() -> void:
 	# exhausted one must rest, and one inside a building (tavern, market)
 	# misses the alarm. Reflexive adjacency combat runs in _combat_step
 	# regardless, and a siege stays committed rather than chasing strays.
+	var hostiles := []
+	for e in agents:
+		if _is_hostile_agent(e) and e.hp > 0 and not _removals.has(e):
+			hostiles.append(e)
 	for a in agents:
 		if a.kind != "hero":
 			continue
@@ -3705,21 +3859,17 @@ func _hero_aggro_tick() -> void:
 			continue
 		if a.hp <= maxi(1, int(ceil(a.max_hp / 3.0))):
 			continue
-		var foe = _nearest_visible_foe(a)
+		var foe = _nearest_visible_foe(a, hostiles)
 		if foe == null:
 			continue
 		a.chase(foe)
 		a.goal = "fight"
 		a.decision_left = 0
 
-func _nearest_visible_foe(h):
+func _nearest_visible_foe(h, hostiles: Array):
 	var best = null
 	var best_d := INF
-	for e in agents:
-		if not _is_hostile_agent(e):
-			continue
-		if e.hp <= 0 or _removals.has(e):
-			continue
+	for e in hostiles:
 		if not explored_at(e.tile()):
 			continue # no line of sight through the fog
 		var d: float = Vector2(h.tile()).distance_to(Vector2(e.tile()))
@@ -4135,30 +4285,40 @@ func _combat_step() -> void:
 			else:
 				hostile_dead.append(a)
 	var hostiles: Array = gobs + bands + rats + hostile_dead
-	var defenders: Array = guards + heroes + allies
+	# Spatial bucketing keeps the adjacency checks from becoming O(n^2).
+	var by_tile := {}
+	for a in agents:
+		var t: Vector2i = a.tile()
+		if not by_tile.has(t):
+			by_tile[t] = []
+		by_tile[t].append(a)
+	var tiles_for := func (center: Vector2i) -> Array:
+		var out := []
+		for dy in range(-1, 2):
+			for dx in range(-1, 2):
+				var nt := center + Vector2i(dx, dy)
+				if by_tile.has(nt):
+					out.append(by_tile[nt])
+		return out
 	for foe in hostiles:
 		var damage := 0
 		var hitters := []
 		var engaged := false
-		for g in guards:
-			if not g.adjacent_to(foe.tile()):
-				continue
-			engaged = true
-			if rng.randf() < guard_accuracy(g):
-				damage += guard_melee_damage(g)
-		for h in heroes:
-			if not h.adjacent_to(foe.tile()):
-				continue
-			engaged = true
-			# Heroes can miss. Accuracy rises with level, while damage per
-			# hit rises only every few levels; gear still adds a point.
-			if rng.randf() < hero_accuracy(h):
-				damage += hero_melee_damage(h)
-				hitters.append(h)
-		for u in allies:
-			if u.adjacent_to(foe.tile()):
-				engaged = true
-				damage += 2
+		var ft: Vector2i = foe.tile()
+		for bucket in tiles_for.call(ft):
+			for g in bucket:
+				if g.kind == "guard":
+					engaged = true
+					if rng.randf() < guard_accuracy(g):
+						damage += guard_melee_damage(g)
+				elif g.kind == "hero":
+					engaged = true
+					if rng.randf() < hero_accuracy(g):
+						damage += hero_melee_damage(g)
+						hitters.append(g)
+				elif g.kind == "undead" and g.undead_side == "ally":
+					engaged = true
+					damage += 2
 		if engaged and foe.state != AgentC.FLEEING:
 			foe.fighting = true
 			foe.behavior_left = 0
@@ -4166,39 +4326,35 @@ func _combat_step() -> void:
 			var wounded: bool = foe.hp > 0
 			foe.hurt(damage)
 			if wounded and foe.hp <= 0:
-				# The kill is credited to the heroes who landed a blow.
 				for h in hitters:
 					_hero_gain_xp(h, 1)
-	for d in defenders:
+	for d in (guards + heroes + allies):
 		var enemies := 0
 		var adjacent := 0
-		for foe in hostiles:
-			if not foe.adjacent_to(d.tile()):
-				continue
-			adjacent += 1
-			if rng.randf() < monster_accuracy(foe):
-				enemies += 1
-		if adjacent > 0 and (d.kind == "hero" or d.kind == "guard" \
-				or d.kind == "undead"):
+		var dt: Vector2i = d.tile()
+		for bucket in tiles_for.call(dt):
+			for foe in bucket:
+				if (foe.kind == "goblin" or foe.kind == "bandit" or foe.kind == "rat" 						or (foe.kind == "undead" and foe.undead_side != "ally")) 						and foe.adjacent_to(dt):
+					adjacent += 1
+					if rng.randf() < monster_accuracy(foe):
+						enemies += 1
+		if adjacent > 0 and (d.kind == "hero" or d.kind == "guard" 				or d.kind == "undead"):
 			d.fighting = true
 		if enemies > 0:
 			d.hurt(enemies)
 	for p in dens.duplicate():
 		var den: Dictionary = dens[p]
-		# Hostile lairs are always siege targets; a bounty makes any other
-		# lair fair game for the realm's armed folk.
 		if not is_hostile_den(p) and not bounties.has(p):
 			continue
 		var besiegers := 0
-		for g in guards:
-			if g.adjacent_to(p) and rng.randf() < guard_accuracy(g):
-				besiegers += guard_melee_damage(g)
-		for h in heroes:
-			if h.adjacent_to(p) and rng.randf() < hero_accuracy(h):
-				besiegers += hero_melee_damage(h)
-		for u in allies:
-			if u.adjacent_to(p):
-				besiegers += 2
+		for bucket in tiles_for.call(p):
+			for g in bucket:
+				if g.kind == "guard" and rng.randf() < guard_accuracy(g):
+					besiegers += guard_melee_damage(g)
+				elif g.kind == "hero" and rng.randf() < hero_accuracy(g):
+					besiegers += hero_melee_damage(g)
+				elif g.kind == "undead" and g.undead_side == "ally":
+					besiegers += 2
 		if besiegers > 0:
 			den.hp -= besiegers
 			if den.hp <= 0:

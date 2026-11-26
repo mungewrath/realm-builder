@@ -249,7 +249,9 @@ func _test_shop_and_rest_loop() -> void:
 	var gold_before: int = sim.gold
 	var shopped := false
 	var rested := false
-	for i in 500:
+	# A hero may make several trips before settling in: give the loop enough
+	# time to shop and then take a proper rest.
+	for i in 1000:
 		sim.update()
 		if not shopped and h.pouch == 0:
 			shopped = true

@@ -33,6 +33,7 @@ const SPEEDS := [1.0, 1.5, 2.0, 3.0]
 var sim_speed := 1.0
 var tick_timer: Timer
 var speed_panel: PanelContainer
+var lair_counts_label: Label
 var speed_buttons := {}
 var speed_label: Label
 var fog_check: CheckButton
@@ -231,6 +232,7 @@ func _refresh() -> void:
 	event_label.text = sim.last_event if sim.last_event != "" else "Drag to explore, pinch to zoom"
 	_refresh_event_log()
 	_refresh_hero_roster()
+	_refresh_lair_counts()
 	if placement_tile.x >= 0:
 		_refresh_placement()
 	farm_button.set_pressed_no_signal(build_mode == "farm")
@@ -991,9 +993,13 @@ func _build_speed_panel() -> void:
 	fog_check.button_pressed = sim.fog_enabled
 	fog_check.add_theme_font_size_override("font_size", 18)
 	fog_check.toggled.connect(_set_fog)
+	lair_counts_label = Label.new()
+	lair_counts_label.add_theme_font_size_override("font_size", 14)
+	lair_counts_label.text = "Lairs: (none)"
 	vb.add_child(speed_label)
 	vb.add_child(row)
 	vb.add_child(fog_check)
+	vb.add_child(lair_counts_label)
 	speed_panel.add_child(vb)
 	get_node("UI/Root").add_child(speed_panel)
 	speed_panel.anchor_left = 1.0
@@ -1001,7 +1007,7 @@ func _build_speed_panel() -> void:
 	speed_panel.offset_left = -260.0
 	speed_panel.offset_right = -16.0
 	speed_panel.offset_top = 76.0
-	speed_panel.offset_bottom = 190.0
+	speed_panel.offset_bottom = 360.0
 	_mark_speed_buttons()
 	dev_button.pressed.connect(_on_dev_pressed)
 
@@ -1022,6 +1028,21 @@ func _set_speed(s: float) -> void:
 	map_view.set_tick_length(1.0 / s)
 	speed_label.text = "Sim speed  ·  now %sx" % str(s)
 	_mark_speed_buttons()
+
+func _refresh_lair_counts() -> void:
+	if lair_counts_label == null:
+		return
+	var counts := {}
+	for p in sim.dens:
+		var k: String = str(sim.dens[p].get("kind", "unknown"))
+		counts[k] = int(counts.get(k, 0)) + 1
+	var parts := []
+	for k in counts:
+		parts.append("%s %d" % [k, counts[k]])
+	parts.sort()
+	lair_counts_label.text = "Lairs (%d)\n%s" % [sim.dens.size(), "\n".join(parts)]
+	lair_counts_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+
 func _mark_speed_buttons() -> void:
 	for s in speed_buttons:
 		speed_buttons[s].set_pressed_no_signal(is_equal_approx(s, sim_speed))
